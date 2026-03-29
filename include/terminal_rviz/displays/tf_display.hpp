@@ -17,7 +17,7 @@ public:
     explicit TFDisplay(rclcpp::Node::SharedPtr node);
 
     void onInitialize() override;
-    void render(RvizRenderer& renderer, ftxui::Canvas& canvas, const std::string& fixed_frame) override;
+    void render(RvizRenderer& renderer, ftxui::Canvas& canvas, const std::string& fixed_frame, std::shared_ptr<tf2_ros::Buffer> tf_buffer) override;
     std::string getMessageType() const override { return "TF"; }
 
     std::vector<std::string> getDiscoveredFrames();

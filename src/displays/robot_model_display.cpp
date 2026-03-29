@@ -31,7 +31,7 @@ void RobotModelDisplay::callback(const std_msgs::msg::String::SharedPtr msg) {
     }
 }
 
-void RobotModelDisplay::render(RvizRenderer& renderer, ftxui::Canvas& canvas, const std::string& fixed_frame) {
+void RobotModelDisplay::render(RvizRenderer& renderer, ftxui::Canvas& canvas, const std::string& fixed_frame, std::shared_ptr<tf2_ros::Buffer> tf_buffer) {
     if (!enabled_ || !model_loaded_) return;
 
     std::lock_guard<std::mutex> lock(mtx_);

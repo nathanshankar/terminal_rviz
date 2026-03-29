@@ -5,7 +5,7 @@ namespace terminal_rviz {
 GridDisplay::GridDisplay(rclcpp::Node::SharedPtr node)
     : Display("Grid", node) {}
 
-void GridDisplay::render(RvizRenderer& renderer, ftxui::Canvas& canvas, const std::string& fixed_frame) {
+void GridDisplay::render(RvizRenderer& renderer, ftxui::Canvas& canvas, const std::string& fixed_frame, std::shared_ptr<tf2_ros::Buffer> tf_buffer) {
     if (!enabled_) return;
 
     float half_size = (cell_count_ * cell_size_) / 2.0f;

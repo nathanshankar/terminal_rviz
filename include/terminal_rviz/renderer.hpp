@@ -26,11 +26,11 @@ public:
     void draw_point(float x, float y, float z, ftxui::Color color, ftxui::Canvas& canvas);
     void draw_line(float x1, float y1, float z1, float x2, float y2, float z2, ftxui::Color color, ftxui::Canvas& canvas);
     
+    void plot(int x, int y, float z, ftxui::Color color, ftxui::Canvas& canvas);
+
     bool project(float dx, float dy, float dz, int& out_sx, int& out_sy, float& out_z) const;
 
 private:
-    void plot_z_point(int x, int y, float z, ftxui::Color color, ftxui::Canvas& canvas);
-
     int width_ = 0;
     int height_ = 0;
     

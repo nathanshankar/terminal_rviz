@@ -35,7 +35,7 @@ bool TFDisplay::isFrameEnabled(const std::string& frame) const {
     return enabled_frames_.count(frame) > 0;
 }
 
-void TFDisplay::render(RvizRenderer& renderer, ftxui::Canvas& canvas, const std::string& fixed_frame) {
+void TFDisplay::render(RvizRenderer& renderer, ftxui::Canvas& canvas, const std::string& fixed_frame, std::shared_ptr<tf2_ros::Buffer> tf_buffer) {
     if (!enabled_ || !tf_buffer_) return;
 
     std::vector<std::string> frames;

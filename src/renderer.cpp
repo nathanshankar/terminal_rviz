@@ -61,7 +61,7 @@ bool RvizRenderer::project(float dx, float dy, float dz, int& out_sx, int& out_s
     return false;
 }
 
-void RvizRenderer::plot_z_point(int x, int y, float z, ftxui::Color color, ftxui::Canvas& canvas) {
+void RvizRenderer::plot(int x, int y, float z, ftxui::Color color, ftxui::Canvas& canvas) {
     if (x < 0 || x >= width_ || y < 0 || y >= height_) return;
     int idx = y * width_ + x;
     if (z < z_buffer_[idx]) {
@@ -74,7 +74,7 @@ void RvizRenderer::draw_point(float x, float y, float z, ftxui::Color color, ftx
     int sx, sy;
     float sz;
     if (project(x, y, z, sx, sy, sz)) {
-        plot_z_point(sx, sy, sz, color, canvas);
+        plot(sx, sy, sz, color, canvas);
     }
 }
 

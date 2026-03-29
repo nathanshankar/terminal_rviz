@@ -19,7 +19,7 @@ class DummyDisplay : public Display {
 public:
     DummyDisplay(const std::string& name, rclcpp::Node::SharedPtr node, const std::string& type = "None") 
         : Display(name, node), type_(type) {}
-    void render(RvizRenderer&, ftxui::Canvas&, const std::string&) override {}
+    void render(RvizRenderer&, ftxui::Canvas&, const std::string&, std::shared_ptr<tf2_ros::Buffer>) override {}
     std::string getMessageType() const override { return type_; }
 private:
     std::string type_;

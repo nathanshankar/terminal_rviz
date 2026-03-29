@@ -137,8 +137,8 @@ Element Visualizer::render_frame() {
     renderer_.set_zoom(zoom_.load());
     renderer_.clear();
 
-    if (grid_display_) grid_display_->render(renderer_, c, fixed_frame_);
-    for (auto& display : displays_) display->render(renderer_, c, fixed_frame_);
+    if (grid_display_) grid_display_->render(renderer_, c, fixed_frame_, tf_buffer_);
+    for (auto& display : displays_) display->render(renderer_, c, fixed_frame_, tf_buffer_);
 
     Elements display_list;
     if (grid_display_) {

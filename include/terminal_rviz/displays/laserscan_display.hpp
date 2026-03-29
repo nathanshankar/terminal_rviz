@@ -13,7 +13,7 @@ public:
     explicit LaserScanDisplay(rclcpp::Node::SharedPtr node);
 
     void onInitialize() override;
-    void render(RvizRenderer& renderer, ftxui::Canvas& canvas, const std::string& fixed_frame) override;
+    void render(RvizRenderer& renderer, ftxui::Canvas& canvas, const std::string& fixed_frame, std::shared_ptr<tf2_ros::Buffer> tf_buffer) override;
     
     void setTopic(const std::string& topic) override;
     std::string getMessageType() const override { return "sensor_msgs/msg/LaserScan"; }

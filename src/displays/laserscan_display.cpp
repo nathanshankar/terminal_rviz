@@ -1,4 +1,5 @@
 #include "terminal_rviz/displays/laserscan_display.hpp"
+#include <tf2_geometry_msgs/tf2_geometry_msgs.hpp>
 #include <cmath>
 
 namespace terminal_rviz {
@@ -22,7 +23,7 @@ void LaserScanDisplay::callback(const sensor_msgs::msg::LaserScan::SharedPtr msg
     current_msg_ = msg;
 }
 
-void LaserScanDisplay::render(RvizRenderer& renderer, ftxui::Canvas& canvas, const std::string& fixed_frame) {
+void LaserScanDisplay::render(RvizRenderer& renderer, ftxui::Canvas& canvas, const std::string& fixed_frame, std::shared_ptr<tf2_ros::Buffer> tf_buffer) {
     if (!enabled_) return;
 
     sensor_msgs::msg::LaserScan::SharedPtr msg;
@@ -33,13 +34,20 @@ void LaserScanDisplay::render(RvizRenderer& renderer, ftxui::Canvas& canvas, con
 
     if (!msg) return;
 
+    // Get transform from laser frame to fixed frame
+    tf2::Transform laser_to_world;
+    try {
+        auto transform_msg = tf_buffer->lookupTransform(fixed_frame, msg->header.frame_id, tf2::TimePointZero);
+        tf2::fromMsg(transform_msg.transform, laser_to_world);
+    } catch (...) { return; }
+
     float angle = msg->angle_min;
     for (size_t i = 0; i < msg->ranges.size(); ++i) {
         float r = msg->ranges[i];
         if (r >= msg->range_min && r <= msg->range_max) {
-            float x = r * std::cos(angle);
-            float y = r * std::sin(angle);
-            renderer.draw_point(x, y, 0.0f, ftxui::Color::Red, canvas);
+            tf2::Vector3 p_local(r * std::cos(angle), r * std::sin(angle), 0.0f);
+            tf2::Vector3 p_world = laser_to_world * p_local;
+            renderer.draw_point(p_world.x(), p_world.y(), p_world.z(), ftxui::Color::Red, canvas);
         }
         angle += msg->angle_increment;
     }

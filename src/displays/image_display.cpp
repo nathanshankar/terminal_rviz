@@ -21,7 +21,7 @@ void ImageDisplay::callback(const sensor_msgs::msg::Image::SharedPtr msg) {
     current_msg_ = msg;
 }
 
-void ImageDisplay::render(RvizRenderer& renderer, ftxui::Canvas& canvas, const std::string& fixed_frame) {
+void ImageDisplay::render(RvizRenderer& renderer, ftxui::Canvas& canvas, const std::string& fixed_frame, std::shared_ptr<tf2_ros::Buffer> tf_buffer) {
     if (!enabled_) return;
 
     sensor_msgs::msg::Image::SharedPtr msg;
