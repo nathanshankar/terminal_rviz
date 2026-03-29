@@ -1,6 +1,8 @@
-# Terminal RViz
+# TViz
 
 Terminal RViz is a lightweight, high-performance 3D visualizer for ROS 2 that runs entirely within a terminal environment. Built using FTXUI and a custom Braille-based software renderer, it provides a feature-rich alternative to standard RViz for headless systems, remote SSH sessions, or resource-constrained environments.
+
+<img width="1842" height="951" alt="image" src="https://github.com/user-attachments/assets/d30913ef-d802-4d93-b3ee-ce58a6a58728" />
 
 ## Features
 
