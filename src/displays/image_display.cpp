@@ -11,9 +11,14 @@ void ImageDisplay::onInitialize() {
 }
 
 void ImageDisplay::setTopic(const std::string& topic) {
-    topic_ = topic;
-    sub_ = node_->create_subscription<sensor_msgs::msg::Image>(
-        topic_, 10, std::bind(&ImageDisplay::callback, this, std::placeholders::_1));
+    try {
+        sub_.reset();
+        topic_ = topic;
+        sub_ = node_->create_subscription<sensor_msgs::msg::Image>(
+            topic_, 10, std::bind(&ImageDisplay::callback, this, std::placeholders::_1));
+    } catch (const std::exception& e) {
+        RCLCPP_ERROR(node_->get_logger(), "Image: Failed to subscribe to %s: %s", topic.c_str(), e.what());
+    }
 }
 
 void ImageDisplay::callback(const sensor_msgs::msg::Image::SharedPtr msg) {

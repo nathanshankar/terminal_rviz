@@ -75,47 +75,41 @@ void Visualizer::discover_topics() {
     auto display = displays_[plugin_idx_];
     std::string target_type = display->getMessageType();
     
+    std::vector<std::string> new_topics;
+
     if (target_type == "TF") {
         auto tf_disp = std::dynamic_pointer_cast<TFDisplay>(display);
         if (tf_disp) {
-            std::vector<std::string> frames = tf_disp->getDiscoveredFrames();
-            if (frames != available_topics_) {
-                std::string current = available_topics_.empty() ? "" : available_topics_[topic_idx_];
-                available_topics_ = frames;
-                auto it = std::find(available_topics_.begin(), available_topics_.end(), current);
-                topic_idx_ = (it != available_topics_.end()) ? std::distance(available_topics_.begin(), it) : 0;
+            new_topics = tf_disp->getDiscoveredFrames();
+        }
+    } else if (target_type != "None") {
+        auto topic_map = node_->get_topic_names_and_types();
+        std::string clean_target = target_type;
+        if (clean_target.find("/") == 0) clean_target = clean_target.substr(1);
+
+        for (const auto& [name, types] : topic_map) {
+            for (const auto& type : types) {
+                std::string clean_type = type;
+                if (clean_type.find("/") == 0) clean_type = clean_type.substr(1);
+                if (clean_type == clean_target) {
+                    new_topics.push_back(name);
+                    break;
+                }
             }
         }
-        return;
+        std::sort(new_topics.begin(), new_topics.end());
     }
 
-    if (target_type == "None") {
-        available_topics_.clear();
-        return;
-    }
-
-    auto topic_map = node_->get_topic_names_and_types();
-    std::vector<std::string> matching_topics;
-    std::string clean_target = target_type;
-    if (clean_target.find("/") == 0) clean_target = clean_target.substr(1);
-
-    for (const auto& [name, types] : topic_map) {
-        for (const auto& type : types) {
-            std::string clean_type = type;
-            if (clean_type.find("/") == 0) clean_type = clean_type.substr(1);
-            if (clean_type == clean_target) {
-                matching_topics.push_back(name);
-                break;
-            }
-        }
-    }
-    
-    std::sort(matching_topics.begin(), matching_topics.end());
-    if (matching_topics != available_topics_) {
-        std::string current = available_topics_.empty() ? "" : available_topics_[topic_idx_];
-        available_topics_ = matching_topics;
+    if (new_topics != available_topics_) {
+        std::string current = (available_topics_.empty() || topic_idx_ >= (int)available_topics_.size()) ? "" : available_topics_[topic_idx_];
+        available_topics_ = new_topics;
+        
         auto it = std::find(available_topics_.begin(), available_topics_.end(), current);
-        topic_idx_ = (it != available_topics_.end()) ? std::distance(available_topics_.begin(), it) : 0;
+        if (it != available_topics_.end()) {
+            topic_idx_ = std::distance(available_topics_.begin(), it);
+        } else {
+            topic_idx_ = 0;
+        }
     }
 }
 

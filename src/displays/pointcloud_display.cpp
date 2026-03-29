@@ -14,9 +14,14 @@ void PointCloudDisplay::onInitialize() {
 }
 
 void PointCloudDisplay::setTopic(const std::string& topic) {
-    topic_ = topic;
-    sub_ = node_->create_subscription<sensor_msgs::msg::PointCloud2>(
-        topic_, 10, std::bind(&PointCloudDisplay::callback, this, std::placeholders::_1));
+    try {
+        sub_.reset();
+        topic_ = topic;
+        sub_ = node_->create_subscription<sensor_msgs::msg::PointCloud2>(
+            topic_, 10, std::bind(&PointCloudDisplay::callback, this, std::placeholders::_1));
+    } catch (const std::exception& e) {
+        RCLCPP_ERROR(node_->get_logger(), "PointCloud: Failed to subscribe to %s: %s", topic.c_str(), e.what());
+    }
 }
 
 void PointCloudDisplay::callback(const sensor_msgs::msg::PointCloud2::SharedPtr msg) {

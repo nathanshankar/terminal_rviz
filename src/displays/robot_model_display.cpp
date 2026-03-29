@@ -18,9 +18,15 @@ void RobotModelDisplay::onInitialize() {
 }
 
 void RobotModelDisplay::setTopic(const std::string& topic) {
-    topic_ = topic;
-    sub_ = node_->create_subscription<std_msgs::msg::String>(
-        topic_, rclcpp::QoS(1).transient_local(), std::bind(&RobotModelDisplay::callback, this, std::placeholders::_1));
+    try {
+        sub_.reset();
+        topic_ = topic;
+        RCLCPP_INFO(node_->get_logger(), "RobotModel: Subscribing to %s", topic_.c_str());
+        sub_ = node_->create_subscription<std_msgs::msg::String>(
+            topic_, rclcpp::QoS(1).transient_local(), std::bind(&RobotModelDisplay::callback, this, std::placeholders::_1));
+    } catch (const std::exception& e) {
+        RCLCPP_ERROR(node_->get_logger(), "RobotModel: Failed to subscribe to %s: %s", topic.c_str(), e.what());
+    }
 }
 
 void RobotModelDisplay::callback(const std_msgs::msg::String::SharedPtr msg) {

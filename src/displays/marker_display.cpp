@@ -12,11 +12,17 @@ void MarkerDisplay::onInitialize() {
 }
 
 void MarkerDisplay::setTopic(const std::string& topic) {
-    topic_ = topic;
-    marker_sub_ = node_->create_subscription<visualization_msgs::msg::Marker>(
-        topic_, 10, std::bind(&MarkerDisplay::markerCallback, this, std::placeholders::_1));
-    marker_array_sub_ = node_->create_subscription<visualization_msgs::msg::MarkerArray>(
-        topic_ + "_array", 10, std::bind(&MarkerDisplay::markerArrayCallback, this, std::placeholders::_1));
+    try {
+        marker_sub_.reset();
+        marker_array_sub_.reset();
+        topic_ = topic;
+        marker_sub_ = node_->create_subscription<visualization_msgs::msg::Marker>(
+            topic_, 10, std::bind(&MarkerDisplay::markerCallback, this, std::placeholders::_1));
+        marker_array_sub_ = node_->create_subscription<visualization_msgs::msg::MarkerArray>(
+            topic_ + "_array", 10, std::bind(&MarkerDisplay::markerArrayCallback, this, std::placeholders::_1));
+    } catch (const std::exception& e) {
+        RCLCPP_ERROR(node_->get_logger(), "Marker: Failed to subscribe to %s: %s", topic.c_str(), e.what());
+    }
 }
 
 void MarkerDisplay::markerCallback(const visualization_msgs::msg::Marker::SharedPtr msg) {

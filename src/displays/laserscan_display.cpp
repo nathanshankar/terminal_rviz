@@ -13,9 +13,14 @@ void LaserScanDisplay::onInitialize() {
 }
 
 void LaserScanDisplay::setTopic(const std::string& topic) {
-    topic_ = topic;
-    sub_ = node_->create_subscription<sensor_msgs::msg::LaserScan>(
-        topic_, 10, std::bind(&LaserScanDisplay::callback, this, std::placeholders::_1));
+    try {
+        sub_.reset();
+        topic_ = topic;
+        sub_ = node_->create_subscription<sensor_msgs::msg::LaserScan>(
+            topic_, 10, std::bind(&LaserScanDisplay::callback, this, std::placeholders::_1));
+    } catch (const std::exception& e) {
+        RCLCPP_ERROR(node_->get_logger(), "LaserScan: Failed to subscribe to %s: %s", topic.c_str(), e.what());
+    }
 }
 
 void LaserScanDisplay::callback(const sensor_msgs::msg::LaserScan::SharedPtr msg) {
