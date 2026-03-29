@@ -74,8 +74,11 @@ int main(int argc, char** argv) {
     visualizer->add_display(markers);
 
     // 8: MarkerArray
-    auto markers_array = std::make_shared<DummyDisplay>("MarkerArray", node, "visualization_msgs/msg/MarkerArray");
-    markers_array->setEnabled(false);
+    auto markers_array = std::make_shared<MarkerDisplay>(node);
+    markers_array->setName("MarkerArray");
+    markers_array->setPreferredType("visualization_msgs/msg/MarkerArray");
+    markers_array->onInitialize();
+    markers_array->setTopic("marker_array");
     visualizer->add_display(markers_array);
 
     // 9: Odometry

@@ -18,7 +18,8 @@ public:
     void render(RvizRenderer& renderer, ftxui::Canvas& canvas, const std::string& fixed_frame, std::shared_ptr<tf2_ros::Buffer> tf_buffer) override;
     
     void setTopic(const std::string& topic) override;
-    std::string getMessageType() const override { return "visualization_msgs/msg/Marker"; }
+    std::string getMessageType() const override { return preferred_type_; }
+    void setPreferredType(const std::string& type) { preferred_type_ = type; }
 
 private:
     void markerCallback(const visualization_msgs::msg::Marker::SharedPtr msg);
@@ -29,6 +30,7 @@ private:
     
     std::mutex mtx_;
     std::map<std::string, visualization_msgs::msg::Marker> markers_;
+    std::string preferred_type_ = "visualization_msgs/msg/Marker";
 };
 
 } // namespace terminal_rviz

@@ -93,7 +93,7 @@ void Nav2Display::remove_last() {
 }
 
 bool Nav2Display::handle_event(ftxui::Event event) {
-    if (event == ftxui::Event::Character('r') || event == ftxui::Event::Character('R')) { cancel_nav(); return true; }
+    if (event == ftxui::Event::Character('c') || event == ftxui::Event::Character('C')) { cancel_nav(); return true; }
     if (event == ftxui::Event::Character(' ') || event == ftxui::Event::Return) { send_goal(); return true; }
     if (event == ftxui::Event::Special("\x7F") || event == ftxui::Event::Backspace) { 
         remove_last(); return true; 
@@ -136,7 +136,11 @@ ftxui::Element Nav2Display::render_2d() {
     std::lock_guard<std::mutex> lock(mtx_);
     using namespace ftxui;
     return vbox({
-        text(" Nav2 Dashboard ") | bold | color(Color::Yellow),
+        hbox({
+            text(" Nav2 ") | bold | color(Color::Yellow),
+            separator(),
+            text(" [Drg] Waypt | [Bksp] Undo | [Ent] Send | [C] Can ") | dim
+        }),
         separator(),
         hbox({ text("Status:     "), text(nav_status_) | color(Color::Green) }),
         hbox({ text("Queue Size: "), text(std::to_string(waypoint_queue_.size())) | bold | color(Color::Cyan) }),
@@ -145,13 +149,6 @@ ftxui::Element Nav2Display::render_2d() {
         hbox({ text("Dist Rem:   "), text(std::to_string(dist_remaining_).substr(0,4) + " m") }),
         hbox({ text("ETA:        "), text(time_remaining_) }),
         hbox({ text("Recoveries: "), text(std::to_string(recoveries_)) | color(Color::Red) }),
-        separator(),
-        vbox({
-            text(" [Click+Drag] Add Waypoint"),
-            text(" [Backspace]  Remove Last"),
-            text(" [Space]      Send Queue"),
-            text(" [R]          Cancel Nav")
-        }) | dim
     }) | border;
 }
 

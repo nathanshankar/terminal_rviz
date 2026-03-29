@@ -67,17 +67,17 @@ private:
     std::atomic<bool> quit_flag_{false};
 
     // Camera State
-    std::atomic<float> tar_yaw_{0.8f};
+    std::atomic<float> tar_yaw_{0.0f};
     std::atomic<float> tar_pitch_{0.5f};
     std::atomic<float> tar_roll_{0.0f};
-    std::atomic<float> tar_dist_{10.0f};
+    std::atomic<float> tar_dist_{5.0f};
     std::atomic<float> cam_x_{0.0f}, cam_y_{0.0f}, cam_z_{0.0f};
-    std::atomic<float> zoom_{100.0f};
+    std::atomic<float> zoom_{250.0f};
 
-    float cur_yaw_ = 0.8f;
+    float cur_yaw_ = 0.0f;
     float cur_pitch_ = 0.5f;
     float cur_roll_ = 0.0f;
-    float cur_dist_ = 10.0f;
+    float cur_dist_ = 5.0f;
 };
 
 } // namespace terminal_rviz

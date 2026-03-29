@@ -31,12 +31,13 @@ void Visualizer::cycle_tool() {
     if (current_tool_ == Tool::Nav2) current_tool_ = Tool::Orbit;
     else if (current_tool_ == Tool::Orbit) current_tool_ = Tool::Pan;
     else current_tool_ = Tool::Nav2;
+    last_mouse_x_ = 0; last_mouse_y_ = 0;
 }
 
 std::string Visualizer::get_tool_name() const {
-    if (current_tool_ == Tool::Nav2) return "NAV2 GOAL";
-    if (current_tool_ == Tool::Orbit) return "CAMERA ORBIT";
-    return "MAP PAN";
+    if (current_tool_ == Tool::Nav2) return "NAV2";
+    if (current_tool_ == Tool::Orbit) return "ORBIT";
+    return "PAN";
 }
 
 void Visualizer::run() {
@@ -45,45 +46,39 @@ void Visualizer::run() {
     auto component = CatchEvent(main_renderer, [this](Event event) { 
         if (event.is_mouse()) {
             auto mouse = event.mouse();
-            float dx = static_cast<float>(mouse.x - last_mouse_x_);
-            float dy = static_cast<float>(mouse.y - last_mouse_y_);
-            
-            // Tool Logic
+            float dx = (last_mouse_x_ == 0) ? 0 : static_cast<float>(mouse.x - last_mouse_x_);
+            float dy = (last_mouse_y_ == 0) ? 0 : static_cast<float>(mouse.y - last_mouse_y_);
+            last_mouse_x_ = mouse.x; last_mouse_y_ = mouse.y;
+
+            std::stringstream ss;
+            ss << "T:" << get_tool_name() << " B:" << (int)mouse.button << " M:" << (int)mouse.motion;
+            status_msg_ = ss.str();
+
+            if (mouse.button == Mouse::WheelUp)   { zoom_ = zoom_.load() * 1.1f; return true; }
+            if (mouse.button == Mouse::WheelDown) { zoom_ = zoom_.load() / 1.1f; return true; }
+
             bool is_pressed = (mouse.motion == Mouse::Pressed);
             bool is_released = (mouse.motion == Mouse::Released);
-            
-            // Side panel is 30, top is 2
-            int vx = mouse.x - 32;
-            int vy = mouse.y - 2;
 
-            if (is_pressed || is_released) {
-                // Determine what action to take based on Tool or Button
-                if (mouse.button == Mouse::Right || (mouse.button == Mouse::Left && current_tool_ == Tool::Orbit)) {
-                    // ORBIT
-                    if (is_pressed && std::abs(dx) < 100) {
-                        tar_yaw_ = tar_yaw_.load() + dx * 0.015f;
-                        tar_pitch_ = tar_pitch_.load() - dy * 0.015f;
+            if (mouse.button == Mouse::Left) {
+                if (current_tool_ == Tool::Orbit) {
+                    if (is_pressed && std::abs(dx) < 50) { tar_yaw_ = tar_yaw_.load() + dx * 0.015f; tar_pitch_ = tar_pitch_.load() - dy * 0.015f; }
+                } else if (current_tool_ == Tool::Pan) {
+                    if (is_pressed && std::abs(dx) < 50) {
+                        float f = tar_dist_.load() * 0.005f, y = cur_yaw_;
+                        cam_x_ = cam_x_.load() - (dy * std::cos(y) + dx * std::sin(y)) * f;
+                        cam_y_ = cam_y_.load() - (dy * std::sin(y) - dx * std::cos(y)) * f;
                     }
-                } else if (mouse.button == Mouse::Middle || (mouse.button == Mouse::Left && current_tool_ == Tool::Pan)) {
-                    // PAN
-                    if (is_pressed && std::abs(dx) < 100) {
-                        float factor = tar_dist_.load() * 0.005f;
-                        float yaw = cur_yaw_;
-                        cam_x_ = cam_x_.load() - (dy * std::cos(yaw) + dx * std::sin(yaw)) * factor;
-                        cam_y_ = cam_y_.load() - (dy * std::sin(yaw) - dx * std::cos(yaw)) * factor;
-                    }
-                } else if (mouse.button == Mouse::Left && current_tool_ == Tool::Nav2) {
-                    // NAV2
-                    if (vx >= 0 && vy >= 0 && plugin_idx_ >= 0) {
-                        auto nav2 = std::dynamic_pointer_cast<Nav2Display>(displays_[plugin_idx_]);
-                        if (nav2) {
-                            float wx, wy;
-                            bool hit = renderer_.pick_ground_plane(vx * 2, vy * 4, wx, wy);
+                } else if (current_tool_ == Tool::Nav2) {
+                    std::shared_ptr<Nav2Display> nav2 = nullptr;
+                    for (auto& d : displays_) if (d->getName() == "Nav2") { nav2 = std::dynamic_pointer_cast<Nav2Display>(d); break; }
+                    if (nav2 && nav2->isEnabled()) {
+                        int vx = mouse.x - 32, vy = mouse.y - 2;
+                        if (vx >= 0 && vy >= 0) {
+                            float wx, wy; bool hit = renderer_.pick_ground_plane(vx * 2, vy * 4, wx, wy);
                             if (is_pressed && hit) {
-                                if (!nav2->is_selecting()) {
-                                    nav2->set_goal(wx, wy, fixed_frame_);
-                                    nav2->start_selection();
-                                } else nav2->update_goal_orientation(wx, wy);
+                                if (!nav2->is_selecting()) { nav2->set_goal(wx, wy, fixed_frame_); nav2->start_selection(); }
+                                else nav2->update_goal_orientation(wx, wy);
                             } else if (is_released) {
                                 if (hit) nav2->update_goal_orientation(wx, wy);
                                 nav2->finalize_selection();
@@ -91,41 +86,36 @@ void Visualizer::run() {
                         }
                     }
                 }
+                return true;
             }
-
-            if (mouse.button == Mouse::WheelUp)   { zoom_ = zoom_.load() * 1.1f; return true; }
-            if (mouse.button == Mouse::WheelDown) { zoom_ = zoom_.load() / 1.1f; return true; }
-
-            last_mouse_x_ = mouse.x; last_mouse_y_ = mouse.y;
+            if (mouse.button == Mouse::Right && is_pressed) {
+                tar_yaw_ = tar_yaw_.load() + dx * 0.015f; tar_pitch_ = tar_pitch_.load() - dy * 0.015f; return true;
+            }
+            if (mouse.button == Mouse::Middle && is_pressed) {
+                float f = tar_dist_.load() * 0.005f, y = cur_yaw_;
+                cam_x_ = cam_x_.load() - (dy * std::cos(y) + dx * std::sin(y)) * f;
+                cam_y_ = cam_y_.load() - (dy * std::sin(y) - dx * std::cos(y)) * f;
+                return true;
+            }
             return true;
         }
         return handle_event(event); 
     });
 
     std::thread ui_thread([&]() {
-        while (!quit_flag_ && rclcpp::ok()) {
-            discover_frames();
-            discover_topics();
-            screen_.PostEvent(Event::Custom);
-            std::this_thread::sleep_for(50ms);
-        }
+        while (!quit_flag_ && rclcpp::ok()) { discover_frames(); discover_topics(); screen_.PostEvent(Event::Custom); std::this_thread::sleep_for(50ms); }
         screen_.Exit();
     });
 
     screen_.Loop(component);
-    quit_flag_ = true;
-    if (ui_thread.joinable()) ui_thread.join();
+    quit_flag_ = true; if (ui_thread.joinable()) ui_thread.join();
 }
 
-void Visualizer::stop() {
-    quit_flag_ = true;
-    screen_.Exit();
-}
+void Visualizer::stop() { quit_flag_ = true; screen_.Exit(); }
 
 void Visualizer::discover_frames() {
     if (!tf_buffer_) return;
-    std::vector<std::string> frames;
-    tf_buffer_->_getFrameStrings(frames);
+    std::vector<std::string> frames; tf_buffer_->_getFrameStrings(frames);
     if (frames.empty()) return;
     std::set<std::string> frame_set(frames.begin(), frames.end());
     std::vector<std::string> sorted_frames(frame_set.begin(), frame_set.end());
@@ -139,10 +129,7 @@ void Visualizer::discover_frames() {
 }
 
 void Visualizer::discover_topics() {
-    if (plugin_idx_ < 0 || static_cast<size_t>(plugin_idx_) >= displays_.size()) {
-        available_topics_.clear();
-        return;
-    }
+    if (plugin_idx_ < 0 || static_cast<size_t>(plugin_idx_) >= displays_.size()) { available_topics_.clear(); return; }
     auto display = displays_[plugin_idx_];
     std::string target_type = display->getMessageType();
     std::vector<std::string> new_topics;
@@ -155,8 +142,7 @@ void Visualizer::discover_topics() {
         if (clean_target.find("/") == 0) clean_target = clean_target.substr(1);
         for (const auto& [name, types] : topic_map) {
             for (const auto& type : types) {
-                std::string clean_type = type;
-                if (clean_type.find("/") == 0) clean_type = clean_type.substr(1);
+                std::string clean_type = type; if (clean_type.find("/") == 0) clean_type = clean_type.substr(1);
                 if (clean_type == clean_target) { new_topics.push_back(name); break; }
             }
         }
@@ -172,20 +158,22 @@ void Visualizer::discover_topics() {
 
 Element Visualizer::render_frame() {
     auto terminal = ftxui::Terminal::Size();
-    int left_panel_width = 30, right_panel_width = 0;
-    Elements right_panel;
+    int left_width = 30, right_width = 0;
+    Element image_panel = filler(), nav2_panel = filler();
+    bool nav2_active = false;
     for (auto& display : displays_) {
-        auto e = display->render_2d();
-        if (e && display->isEnabled()) {
-            right_panel.push_back(e);
-            if (display->getName() == "Image") {
-                auto img_disp = std::dynamic_pointer_cast<ImageDisplay>(display);
-                if (img_disp && img_disp->getEnabledTopicCount() > 0) right_panel_width = 64; 
-            }
-        }
+        if (!display->isEnabled()) continue;
+        if (display->getName() == "Image") {
+            auto img_disp = std::dynamic_pointer_cast<ImageDisplay>(display);
+            if (img_disp && img_disp->getEnabledTopicCount() > 0) { image_panel = img_disp->render_2d(); right_width = 64; }
+        } else if (display->getName() == "Nav2") { nav2_panel = display->render_2d(); nav2_active = true; right_width = 64; }
     }
+    
+    // Dynamic sidebar width capping to prevent collapse
+    if (terminal.dimx < 120) right_width = std::min(right_width, terminal.dimx / 3);
+
     const int target_height = std::max(10, terminal.dimy - 8);
-    const int target_width = std::max(10, terminal.dimx - left_panel_width - right_panel_width - 6);
+    const int target_width = std::max(10, terminal.dimx - left_width - right_width - 6);
     const int sw = target_width * 2, sh = target_height * 4;
     auto c = Canvas(sw, sh);
     cur_yaw_ += (tar_yaw_.load() - cur_yaw_) * 0.2f;
@@ -245,7 +233,7 @@ Element Visualizer::render_frame() {
             separator(),
             text(" Frame: " + fixed_frame_) | color(Color::Cyan),
             filler(),
-            text(" [V] Tool | [Drag] Tool Action | [G] Grid | [1-0] Toggle | [Tab] Select | [Q] Quit ") | dim
+            text(" [V] Tool | [R] Reset | [G] Grid | [Tab] Select | [T/Y] Navigate | [Space] Toggle | [Q] Quit ") | dim
         }),
         separator(),
         hbox({
@@ -261,18 +249,39 @@ Element Visualizer::render_frame() {
                 filler(),
                 text(" STATUS: ") | bold,
                 text(status_msg_) | color(Color::Green) | size(HEIGHT, EQUAL, 2),
-            }) | size(WIDTH, EQUAL, left_panel_width),
+            }) | size(WIDTH, EQUAL, left_width),
             canvas(std::move(c)) | center | flex | border,
-            vbox(std::move(right_panel)) | vscroll_indicator | frame | size(WIDTH, GREATER_THAN, 0),
+            vbox({
+                image_panel | flex,
+                nav2_active ? nav2_panel : filler(),
+            }) | size(WIDTH, EQUAL, right_width),
         }) | flex
     }) | border;
 }
 
 bool Visualizer::handle_event(Event event) {
     if (event == Event::Character('q') || event == Event::Escape) { quit_flag_ = true; screen_.Exit(); return true; }
+    
+    // 1. Check Global Confirmation (Enter)
+    if (event == Event::Return) {
+        for (auto& d : displays_) if (d->getName() == "Nav2" && d->isEnabled()) { if (d->handle_event(event)) return true; }
+    }
+
+    // 2. Try global Nav2 shortcuts (C, Backspace) if enabled
+    for (auto& d : displays_) {
+        if (d->getName() == "Nav2" && d->isEnabled()) {
+            if (event == Event::Character('c') || event == Event::Character('C') ||
+                event == Event::Special("\x7F") || event == Event::Backspace) {
+                if (d->handle_event(event)) return true;
+            }
+        }
+    }
+
+    // 3. Delegate to active plugin (Handle Space here for contextual toggle)
     if (plugin_idx_ >= 0 && plugin_idx_ < (int)displays_.size()) {
         if (displays_[plugin_idx_]->handle_event(event)) return true;
     }
+
     if (event == Event::ArrowUp)    { cam_z_ = cam_z_.load() + 0.5f; return true; }
     if (event == Event::ArrowDown)  { cam_z_ = cam_z_.load() - 0.5f; return true; }
     if (event == Event::ArrowLeft)  { cam_y_ = cam_y_.load() + 0.5f; return true; }
@@ -283,6 +292,11 @@ bool Visualizer::handle_event(Event event) {
     if (event == Event::Character('d')) { tar_yaw_ = tar_yaw_.load() + 0.1f; return true; }
     if (event == Event::Character('w')) { tar_pitch_ = tar_pitch_.load() + 0.1f; return true; }
     if (event == Event::Character('s')) { tar_pitch_ = tar_pitch_.load() - 0.1f; return true; }
+    if (event == Event::Character('r') || event == Event::Character('R')) {
+        tar_yaw_ = 0.0f; tar_pitch_ = 0.5f; tar_dist_ = 5.0f;
+        cam_x_ = 0.0f; cam_y_ = 0.0f; cam_z_ = 0.0f; zoom_ = 250.0f;
+        return true;
+    }
     if (event == Event::Character('+') || event == Event::Character('=')) { zoom_ = zoom_.load() * 1.1f; return true; }
     if (event == Event::Character('-') || event == Event::Character('_')) { zoom_ = zoom_.load() / 1.1f; return true; }
     if (event == Event::Character('g') || event == Event::Character('G')) { if (grid_display_) grid_display_->toggle(); return true; }
@@ -293,23 +307,38 @@ bool Visualizer::handle_event(Event event) {
         return true;
     }
     if (event == Event::Character('t') || event == Event::Character('T')) {
-        if (!available_topics_.empty()) topic_idx_ = (topic_idx_ - 1 + available_topics_.size()) % available_topics_.size();
+        if (!available_topics_.empty()) {
+            topic_idx_ = (topic_idx_ - 1 + available_topics_.size()) % available_topics_.size();
+            if (plugin_idx_ >= 0) {
+                auto disp = displays_[plugin_idx_];
+                std::string type = disp->getMessageType();
+                if (type != "TF" && type != "sensor_msgs/msg/Image" && type != "None") {
+                    disp->setTopic(available_topics_[topic_idx_]);
+                }
+            }
+        }
         return true;
     }
     if (event == Event::Character('y') || event == Event::Character('Y')) {
-        if (!available_topics_.empty()) topic_idx_ = (topic_idx_ + 1) % available_topics_.size();
+        if (!available_topics_.empty()) {
+            topic_idx_ = (topic_idx_ + 1) % available_topics_.size();
+            if (plugin_idx_ >= 0) {
+                auto disp = displays_[plugin_idx_];
+                std::string type = disp->getMessageType();
+                if (type != "TF" && type != "sensor_msgs/msg/Image" && type != "None") {
+                    disp->setTopic(available_topics_[topic_idx_]);
+                }
+            }
+        }
         return true;
     }
-    if (event == Event::Character(' ') || event == Event::Return) {
+    if (event == Event::Character(' ')) {
         if (plugin_idx_ >= 0 && plugin_idx_ < (int)displays_.size()) {
             auto disp = displays_[plugin_idx_];
             if (disp->getMessageType() == "TF" && !available_topics_.empty()) {
                 auto tf_disp = std::dynamic_pointer_cast<TFDisplay>(disp);
                 if (tf_disp) { tf_disp->toggleFrame(available_topics_[topic_idx_]); return true; }
-            } else if (!available_topics_.empty() && disp->getMessageType() != "Nav2") { 
-                disp->setTopic(available_topics_[topic_idx_]); 
-                return true; 
-            }
+            } else if (!available_topics_.empty()) { disp->setTopic(available_topics_[topic_idx_]); return true; }
         }
     }
     if (event.is_character() && event.character()[0] >= '0' && event.character()[0] <= '9') {

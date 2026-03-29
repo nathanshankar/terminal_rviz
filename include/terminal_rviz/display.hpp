@@ -22,12 +22,13 @@ public:
     virtual void update(double dt) {}
     virtual void render(RvizRenderer& renderer, ftxui::Canvas& canvas, const std::string& fixed_frame, std::shared_ptr<tf2_ros::Buffer> tf_buffer) = 0;
     virtual ftxui::Element render_2d() { return ftxui::filler(); }
-    virtual bool handle_event(ftxui::Event) { return false; }
+    virtual bool handle_event(ftxui::Event event) { return false; }
 
-    void setEnabled(bool enabled) { enabled_ = enabled; }
+    void setName(const std::string& name) { name_ = name; }
     bool isEnabled() const { return enabled_; }
+    void setEnabled(bool enabled) { enabled_ = enabled; }
     void toggle() { enabled_ = !enabled_; }
-    const std::string& getName() const { return name_; }
+    std::string getName() const { return name_; }
     
     virtual std::string getTopic() const { return topic_; }
     virtual void setTopic(const std::string& topic) { topic_ = topic; }
@@ -37,7 +38,7 @@ protected:
     std::string name_;
     std::string topic_;
     rclcpp::Node::SharedPtr node_;
-    bool enabled_ = true;
+    bool enabled_ = false;
 };
 
 } // namespace terminal_rviz

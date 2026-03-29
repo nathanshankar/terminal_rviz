@@ -5,6 +5,7 @@
 #include <deque>
 
 #include "nav_msgs/msg/odometry.hpp"
+#include "geometry_msgs/msg/pose_stamped.hpp"
 #include "terminal_rviz/display.hpp"
 
 namespace terminal_rviz {
@@ -24,8 +25,8 @@ private:
 
     rclcpp::Subscription<nav_msgs::msg::Odometry>::SharedPtr sub_;
     std::mutex mtx_;
-    std::deque<geometry_msgs::msg::Point> path_;
-    size_t max_path_size_ = 100;
+    std::deque<geometry_msgs::msg::PoseStamped> history_;
+    size_t max_history_ = 10;
 };
 
 } // namespace terminal_rviz

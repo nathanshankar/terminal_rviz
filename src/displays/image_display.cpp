@@ -2,6 +2,7 @@
 #include "ftxui/dom/elements.hpp"
 #include "ftxui/dom/canvas.hpp"
 #include <algorithm>
+#include <cstring>
 
 namespace terminal_rviz {
 
@@ -19,7 +20,7 @@ void ImageDisplay::setTopic(const std::string& topic) {
         latest_images_.erase(topic);
         return;
     }
-    if (enabled_topics_.size() >= 3) return;
+    if (enabled_topics_.size() >= 2) return;
     enabled_topics_.push_back(topic);
     try {
         subs_[topic] = node_->create_subscription<sensor_msgs::msg::Image>(
@@ -55,22 +56,14 @@ ftxui::Element ImageDisplay::render_2d() {
 
     auto terminal = ftxui::Terminal::Size();
     int num_images = topics_copy.size();
-    
-    // Leave space for headers/borders (approx 10 rows)
-    int available_char_h = std::max(5, terminal.dimy - 10); 
+    int available_char_h = std::max(10, terminal.dimy - 20); 
     int char_h_per_img = (available_char_h / num_images); 
+    int max_rows = (num_images > 1) ? 12 : 25;
+    int image_rows = std::clamp(char_h_per_img - 2, 4, max_rows);
     
-    // Each panel has a title (1) and borders (2) = 3 rows overhead
-    int image_rows = std::max(2, char_h_per_img - 3);
-    
-    int target_h = image_rows * 4; // Convert rows to Braille dots
-    int target_w = (target_h * 4) / 3; // 4:3 aspect ratio
-    
-    // Cap width to sidebar width (60 chars = 120 dots)
-    if (target_w > 120) {
-        target_w = 120;
-        target_h = (target_w * 3) / 4;
-    }
+    int target_h = image_rows * 4;
+    int target_w = (target_h * 4) / 3;
+    if (target_w > 120) { target_w = 120; target_h = (target_w * 3) / 4; }
 
     for (const auto& topic : topics_copy) {
         sensor_msgs::msg::Image::SharedPtr msg;
@@ -80,38 +73,61 @@ ftxui::Element ImageDisplay::render_2d() {
         }
 
         if (!msg) {
-            panels.push_back(ftxui::vbox({ ftxui::text("Waiting: " + topic) | ftxui::center }) | ftxui::border);
+            panels.push_back(ftxui::vbox({ ftxui::text(" Waiting: " + topic) | ftxui::center }) | ftxui::border | ftxui::flex);
             continue;
         }
 
         auto c = ftxui::Canvas(target_w, target_h);
-        int channels = 3;
-        bool is_bgr = false, is_mono = false;
-        if (msg->encoding == "mono8") { channels = 1; is_mono = true; }
-        else if (msg->encoding == "bgr8") { channels = 3; is_bgr = true; }
-        else if (msg->encoding == "rgb8") { channels = 3; is_bgr = false; }
-        else if (msg->encoding == "bgra8") { channels = 4; is_bgr = true; }
-        else if (msg->encoding == "rgba8") { channels = 4; is_bgr = false; }
-        else { channels = msg->step / msg->width; if (channels < 1) channels = 3; }
+        
+        // Encoding Detection
+        bool is_bgr = false, is_rgb = false, is_mono8 = false, is_16uc1 = false, is_32fc1 = false;
+        if (msg->encoding == "mono8") is_mono8 = true;
+        else if (msg->encoding == "16UC1") is_16uc1 = true;
+        else if (msg->encoding == "32FC1") is_32fc1 = true;
+        else if (msg->encoding == "bgr8" || msg->encoding == "bgra8") is_bgr = true;
+        else if (msg->encoding == "rgb8" || msg->encoding == "rgba8") is_rgb = true;
+        else is_bgr = true; // Fallback
+
+        int channels = (msg->encoding.find("8") != std::string::npos && msg->encoding.find("a") != std::string::npos) ? 4 : 3;
+        if (is_mono8) channels = 1;
 
         float sw = (float)msg->width / target_w, sh = (float)msg->height / target_h;
         for (int y = 0; y < target_h; ++y) {
             for (int x = 0; x < target_w; ++x) {
                 int ix = (int)(x * sw), iy = (int)(y * sh);
-                size_t idx = (iy * msg->step) + (ix * channels);
-                if (idx + (channels - 1) < msg->data.size()) {
-                    uint8_t r = 0, g = 0, b = 0;
-                    if (is_mono) r = g = b = msg->data[idx];
-                    else if (is_bgr) { b = msg->data[idx]; g = msg->data[idx+1]; r = msg->data[idx+2]; }
-                    else { r = msg->data[idx]; g = msg->data[idx+1]; b = msg->data[idx+2]; }
-                    c.DrawPoint(x, y, true, ftxui::Color::RGB(r, g, b));
+                uint8_t r = 0, g = 0, b = 0;
+
+                if (is_16uc1) {
+                    size_t idx = (iy * msg->step) + (ix * 2);
+                    if (idx + 1 < msg->data.size()) {
+                        uint16_t depth; std::memcpy(&depth, &msg->data[idx], 2);
+                        uint8_t val = (uint8_t)std::clamp((int)depth / 40, 0, 255); // Scale ~10m to 255
+                        r = g = b = val;
+                    }
+                } else if (is_32fc1) {
+                    size_t idx = (iy * msg->step) + (ix * 4);
+                    if (idx + 3 < msg->data.size()) {
+                        float depth; std::memcpy(&depth, &msg->data[idx], 4);
+                        uint8_t val = (uint8_t)std::clamp((int)(depth * 25.0f), 0, 255); // Scale 10m to 255
+                        r = g = b = val;
+                    }
+                } else if (is_mono8) {
+                    size_t idx = (iy * msg->step) + ix;
+                    if (idx < msg->data.size()) r = g = b = msg->data[idx];
+                } else {
+                    size_t idx = (iy * msg->step) + (ix * channels);
+                    if (idx + 2 < msg->data.size()) {
+                        if (is_bgr) { b = msg->data[idx]; g = msg->data[idx+1]; r = msg->data[idx+2]; }
+                        else { r = msg->data[idx]; g = msg->data[idx+1]; b = msg->data[idx+2]; }
+                    }
                 }
+                c.DrawPoint(x, y, true, ftxui::Color::RGB(r, g, b));
             }
         }
 
         panels.push_back(ftxui::vbox({
-            ftxui::text(topic) | ftxui::bold | ftxui::color(ftxui::Color::Cyan),
-            ftxui::canvas(std::move(c)) | ftxui::size(ftxui::WIDTH, ftxui::EQUAL, target_w / 2) | ftxui::size(ftxui::HEIGHT, ftxui::EQUAL, target_h / 4)
+            ftxui::text(topic) | ftxui::bold | ftxui::color(ftxui::Color::Cyan) | ftxui::hcenter,
+            ftxui::canvas(std::move(c)) | ftxui::size(ftxui::WIDTH, ftxui::EQUAL, target_w / 2) | ftxui::size(ftxui::HEIGHT, ftxui::EQUAL, target_h / 4) | ftxui::hcenter
         }) | ftxui::border);
     }
 

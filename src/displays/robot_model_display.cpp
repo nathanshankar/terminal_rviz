@@ -134,8 +134,6 @@ void RobotModelDisplay::render_geometry(urdf::GeometrySharedPtr geom, const tf2:
         size_t max_r = 15000, step = std::max(1UL, mesh->points.size() / max_r);
         for (size_t i=0; i<mesh->points.size(); i+=step) {
             const auto& mp = mesh->points[i]; tf2::Vector3 p_w = tf * tf2::Vector3(mp.pos.x()*scale.x(), mp.pos.y()*scale.y(), mp.pos.z()*scale.z());
-            renderer.plot(0,0,0, ftxui::Color::White); // Placeholder to show I'm updating
-            // Correct way: use projected coordinates in renderer.plot
             int sx, sy; float sz; if (renderer.project(p_w.x(), p_w.y(), p_w.z(), sx, sy, sz)) renderer.plot(sx, sy, sz, has_mat ? base : mp.color);
         }
     }
