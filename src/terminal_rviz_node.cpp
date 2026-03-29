@@ -82,6 +82,11 @@ int main(int argc, char** argv) {
     odom->onInitialize();
     visualizer->add_display(odom);
 
+    // 0: Nav2
+    auto nav2 = std::make_shared<DummyDisplay>("Nav2", node);
+    nav2->setEnabled(false);
+    visualizer->add_display(nav2);
+
     std::thread ros_thread([&]() {
         rclcpp::spin(node);
     });
