@@ -1,5 +1,9 @@
 #include "terminal_rviz/displays/map_display.hpp"
+#if __has_include(<tf2_geometry_msgs/tf2_geometry_msgs.hpp>)
 #include <tf2_geometry_msgs/tf2_geometry_msgs.hpp>
+#else
+#include <tf2_geometry_msgs/tf2_geometry_msgs.h>
+#endif
 
 namespace terminal_rviz {
 
