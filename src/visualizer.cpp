@@ -66,11 +66,21 @@ void Visualizer::run() {
                 if (current_tool_ == Tool::Orbit) {
                     if (is_pressed && std::abs(dx) < 50) { tar_yaw_ = tar_yaw_.load() + dx * 0.015f; tar_pitch_ = tar_pitch_.load() - dy * 0.015f; }
                 } else if (current_tool_ == Tool::Pan) {
-                    if (is_pressed && std::abs(dx) < 50) {
-                        float f = tar_dist_.load() * 0.005f, y = cur_yaw_;
-                        float dy_boosted = dy * 2.5f; 
-                        tar_cam_x_ = tar_cam_x_.load() - (dy_boosted * std::cos(y) + dx * std::sin(y)) * f;
-                        tar_cam_y_ = tar_cam_y_.load() - (dy_boosted * std::sin(y) - dx * std::cos(y)) * f;
+                    if (is_pressed && std::abs(dx) < 100) {
+                        float y = cur_yaw_, p = cur_pitch_;
+                        float sy = std::sin(y), cy = std::cos(y);
+                        float sp = std::sin(p), cp = std::cos(p);
+                        float factor = tar_dist_.load() / tar_zoom_.load();
+                        
+                        // Right vector: [sy, -cy, 0]
+                        // Up vector: [-sp*cy, -sp*sy, -cp]
+                        float mx = (dx * sy - dy * sp * cy) * factor;
+                        float my = (-dx * cy - dy * sp * sy) * factor;
+                        float mz = (-dy * cp) * factor;
+
+                        tar_cam_x_ = tar_cam_x_.load() + mx;
+                        tar_cam_y_ = tar_cam_y_.load() + my;
+                        tar_cam_z_ = tar_cam_z_.load() + mz;
                     }
                 } else if (current_tool_ == Tool::Nav2) {
                     std::shared_ptr<Nav2Display> nav2 = nullptr;
