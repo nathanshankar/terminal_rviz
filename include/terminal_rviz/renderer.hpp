@@ -27,6 +27,9 @@ public:
 
     bool project(float dx, float dy, float dz, int& out_sx, int& out_sy, float& out_z) const;
 
+    int get_width() const { return width_; }
+    int get_height() const { return height_; }
+
 private:
     int width_ = 0;
     int height_ = 0;

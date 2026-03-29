@@ -1,55 +1,121 @@
 #include "terminal_rviz/displays/image_display.hpp"
+#include "ftxui/dom/elements.hpp"
+#include "ftxui/dom/canvas.hpp"
+#include <algorithm>
 
 namespace terminal_rviz {
 
 ImageDisplay::ImageDisplay(rclcpp::Node::SharedPtr node)
     : Display("Image", node) {}
 
-void ImageDisplay::onInitialize() {
-    topic_ = node_->declare_parameter(name_ + ".topic", "image_raw");
-    setTopic(topic_);
-}
+void ImageDisplay::onInitialize() {}
 
 void ImageDisplay::setTopic(const std::string& topic) {
+    std::lock_guard<std::mutex> lock(mtx_);
+    auto it = std::find(enabled_topics_.begin(), enabled_topics_.end(), topic);
+    if (it != enabled_topics_.end()) {
+        enabled_topics_.erase(it);
+        subs_.erase(topic);
+        latest_images_.erase(topic);
+        return;
+    }
+    if (enabled_topics_.size() >= 3) return;
+    enabled_topics_.push_back(topic);
     try {
-        sub_.reset();
-        topic_ = topic;
-        sub_ = node_->create_subscription<sensor_msgs::msg::Image>(
-            topic_, 10, std::bind(&ImageDisplay::callback, this, std::placeholders::_1));
-    } catch (const std::exception& e) {
-        RCLCPP_ERROR(node_->get_logger(), "Image: Failed to subscribe to %s: %s", topic.c_str(), e.what());
+        subs_[topic] = node_->create_subscription<sensor_msgs::msg::Image>(
+            topic, 10, [this, topic](const sensor_msgs::msg::Image::SharedPtr msg) {
+                this->callback(msg, topic);
+            });
+    } catch (...) {
+        enabled_topics_.pop_back();
     }
 }
 
-void ImageDisplay::callback(const sensor_msgs::msg::Image::SharedPtr msg) {
+bool ImageDisplay::isTopicEnabled(const std::string& topic) const {
     std::lock_guard<std::mutex> lock(mtx_);
-    current_msg_ = msg;
+    return std::find(enabled_topics_.begin(), enabled_topics_.end(), topic) != enabled_topics_.end();
 }
 
-void ImageDisplay::render(RvizRenderer& renderer, ftxui::Canvas& canvas, const std::string& fixed_frame, std::shared_ptr<tf2_ros::Buffer> tf_buffer) {
-    if (!enabled_) return;
+void ImageDisplay::callback(const sensor_msgs::msg::Image::SharedPtr msg, const std::string& topic) {
+    std::lock_guard<std::mutex> lock(mtx_);
+    latest_images_[topic] = msg;
+}
 
-    sensor_msgs::msg::Image::SharedPtr msg;
+void ImageDisplay::render(RvizRenderer& renderer, ftxui::Canvas& canvas, const std::string& fixed_frame, std::shared_ptr<tf2_ros::Buffer> tf_buffer) {}
+
+ftxui::Element ImageDisplay::render_2d() {
+    if (!enabled_ || enabled_topics_.empty()) return ftxui::filler();
+
+    ftxui::Elements panels;
+    std::vector<std::string> topics_copy;
     {
         std::lock_guard<std::mutex> lock(mtx_);
-        msg = current_msg_;
+        topics_copy = enabled_topics_;
     }
 
-    if (!msg) return;
+    auto terminal = ftxui::Terminal::Size();
+    int num_images = topics_copy.size();
+    
+    // Leave space for headers/borders (approx 10 rows)
+    int available_char_h = std::max(5, terminal.dimy - 10); 
+    int char_h_per_img = (available_char_h / num_images); 
+    
+    // Each panel has a title (1) and borders (2) = 3 rows overhead
+    int image_rows = std::max(2, char_h_per_img - 3);
+    
+    int target_h = image_rows * 4; // Convert rows to Braille dots
+    int target_w = (target_h * 4) / 3; // 4:3 aspect ratio
+    
+    // Cap width to sidebar width (60 chars = 120 dots)
+    if (target_w > 120) {
+        target_w = 120;
+        target_h = (target_w * 3) / 4;
+    }
 
-    int img_w = msg->width, img_h = msg->height;
-    int target_w = 40, target_h = 30;
-    float sw = (float)img_w / target_w, sh = (float)img_h / target_h;
+    for (const auto& topic : topics_copy) {
+        sensor_msgs::msg::Image::SharedPtr msg;
+        {
+            std::lock_guard<std::mutex> lock(mtx_);
+            if (latest_images_.count(topic)) msg = latest_images_[topic];
+        }
 
-    for (int y = 0; y < target_h; ++y) {
-        for (int x = 0; x < target_w; ++x) {
-            int ix = (int)(x * sw), iy = (int)(y * sh);
-            size_t idx = (iy * msg->step) + (ix * 3);
-            if (idx + 2 < msg->data.size()) {
-                renderer.plot(x, y, -10.0f, ftxui::Color::RGB(msg->data[idx], msg->data[idx+1], msg->data[idx+2]));
+        if (!msg) {
+            panels.push_back(ftxui::vbox({ ftxui::text("Waiting: " + topic) | ftxui::center }) | ftxui::border);
+            continue;
+        }
+
+        auto c = ftxui::Canvas(target_w, target_h);
+        int channels = 3;
+        bool is_bgr = false, is_mono = false;
+        if (msg->encoding == "mono8") { channels = 1; is_mono = true; }
+        else if (msg->encoding == "bgr8") { channels = 3; is_bgr = true; }
+        else if (msg->encoding == "rgb8") { channels = 3; is_bgr = false; }
+        else if (msg->encoding == "bgra8") { channels = 4; is_bgr = true; }
+        else if (msg->encoding == "rgba8") { channels = 4; is_bgr = false; }
+        else { channels = msg->step / msg->width; if (channels < 1) channels = 3; }
+
+        float sw = (float)msg->width / target_w, sh = (float)msg->height / target_h;
+        for (int y = 0; y < target_h; ++y) {
+            for (int x = 0; x < target_w; ++x) {
+                int ix = (int)(x * sw), iy = (int)(y * sh);
+                size_t idx = (iy * msg->step) + (ix * channels);
+                if (idx + (channels - 1) < msg->data.size()) {
+                    uint8_t r = 0, g = 0, b = 0;
+                    if (is_mono) r = g = b = msg->data[idx];
+                    else if (is_bgr) { b = msg->data[idx]; g = msg->data[idx+1]; r = msg->data[idx+2]; }
+                    else { r = msg->data[idx]; g = msg->data[idx+1]; b = msg->data[idx+2]; }
+                    c.DrawPoint(x, y, true, ftxui::Color::RGB(r, g, b));
+                }
             }
         }
+
+        panels.push_back(ftxui::vbox({
+            ftxui::text(topic) | ftxui::bold | ftxui::color(ftxui::Color::Cyan),
+            ftxui::canvas(std::move(c)) | ftxui::size(ftxui::WIDTH, ftxui::EQUAL, target_w / 2) | ftxui::size(ftxui::HEIGHT, ftxui::EQUAL, target_h / 4)
+        }) | ftxui::border);
     }
+
+    return ftxui::vbox(std::move(panels));
 }
 
 } // namespace terminal_rviz

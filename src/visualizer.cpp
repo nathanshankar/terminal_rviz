@@ -1,5 +1,6 @@
 #include "terminal_rviz/visualizer.hpp"
 #include "terminal_rviz/displays/tf_display.hpp"
+#include "terminal_rviz/displays/image_display.hpp"
 
 #include <chrono>
 #include <set>
@@ -115,8 +116,27 @@ void Visualizer::discover_topics() {
 
 Element Visualizer::render_frame() {
     auto terminal = ftxui::Terminal::Size();
+    
+    // Calculate panel widths
+    int left_panel_width = 30;
+    int right_panel_width = 0;
+    
+    Elements right_panel;
+    for (auto& display : displays_) {
+        auto e = display->render_2d();
+        if (e && display->isEnabled()) {
+            right_panel.push_back(e);
+            if (display->getName() == "Image") {
+                auto img_disp = std::dynamic_pointer_cast<ImageDisplay>(display);
+                if (img_disp && img_disp->getEnabledTopicCount() > 0) {
+                     right_panel_width = 64; 
+                }
+            }
+        }
+    }
+
     const int target_height = std::max(10, terminal.dimy - 8);
-    const int target_width = std::max(10, terminal.dimx - 32);
+    const int target_width = std::max(10, terminal.dimx - left_panel_width - right_panel_width - 6);
     
     const int sw = target_width * 2;
     const int sh = target_height * 4;
@@ -178,6 +198,11 @@ Element Visualizer::render_frame() {
                         bool enabled = tf_disp && tf_disp->isFrameEnabled(name);
                         auto t = text((enabled ? "[X] " : "[ ] ") + name);
                         topic_list.push_back(is_selected ? (t | inverted | color(Color::Magenta) | focus) : t);
+                    } else if (type == "sensor_msgs/msg/Image") {
+                        auto img_disp = std::dynamic_pointer_cast<ImageDisplay>(disp);
+                        bool enabled = img_disp && img_disp->isTopicEnabled(name);
+                        auto t = text((enabled ? "[X] " : "[ ] ") + name);
+                        topic_list.push_back(is_selected ? (t | inverted | color(Color::Magenta) | focus) : t);
                     } else {
                         auto t = text(name);
                         topic_list.push_back(is_selected ? (t | inverted | color(Color::Magenta) | focus) : t);
@@ -209,8 +234,9 @@ Element Visualizer::render_frame() {
                 filler(),
                 text(" STATUS: ") | bold,
                 text(status_msg_) | color(Color::Green) | size(HEIGHT, EQUAL, 2),
-            }) | size(WIDTH, EQUAL, 30),
-            canvas(std::move(c)) | hcenter | flex | border,
+            }) | size(WIDTH, EQUAL, left_panel_width),
+            canvas(std::move(c)) | center | flex | border,
+            vbox(std::move(right_panel)) | vscroll_indicator | frame | size(WIDTH, GREATER_THAN, 0),
         }) | flex
     }) | border;
 }
@@ -249,12 +275,6 @@ bool Visualizer::handle_event(Event event) {
     if (event == Event::Character('t') || event == Event::Character('T')) {
         if (!available_topics_.empty()) {
             topic_idx_ = (topic_idx_ - 1 + available_topics_.size()) % available_topics_.size();
-            if (plugin_idx_ >= 0 && plugin_idx_ < (int)displays_.size()) {
-                auto disp = displays_[plugin_idx_];
-                if (disp->getMessageType() != "TF") {
-                    disp->setTopic(available_topics_[topic_idx_]);
-                }
-            }
         }
         return true;
     }
@@ -262,12 +282,6 @@ bool Visualizer::handle_event(Event event) {
     if (event == Event::Character('y') || event == Event::Character('Y')) {
         if (!available_topics_.empty()) {
             topic_idx_ = (topic_idx_ + 1) % available_topics_.size();
-            if (plugin_idx_ >= 0 && plugin_idx_ < (int)displays_.size()) {
-                auto disp = displays_[plugin_idx_];
-                if (disp->getMessageType() != "TF") {
-                    disp->setTopic(available_topics_[topic_idx_]);
-                }
-            }
         }
         return true;
     }
@@ -281,6 +295,9 @@ bool Visualizer::handle_event(Event event) {
                     tf_disp->toggleFrame(available_topics_[topic_idx_]);
                     return true;
                 }
+            } else if (!available_topics_.empty()) {
+                disp->setTopic(available_topics_[topic_idx_]);
+                return true;
             }
         }
     }
