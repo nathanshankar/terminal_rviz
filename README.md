@@ -4,6 +4,16 @@ Terminal RViz is a lightweight, high-performance 3D visualizer for ROS 2 that ru
 
 <img width="1842" height="951" alt="image" src="https://github.com/user-attachments/assets/d30913ef-d802-4d93-b3ee-ce58a6a58728" />
 
+## Build Status
+
+| Distribution | Status |
+| :--- | :--- |
+| **ROS 2 Foxy** | [![Foxy Build Status](https://img.shields.io/github/actions/workflow/status/nathanshankar/terminal_rviz/ros_build_foxy.yml?branch=main&label=Build)](https://github.com/nathanshankar/terminal_rviz/actions/workflows/ros_build_foxy.yml) |
+| **ROS 2 Humble** | [![Humble Build Status](https://img.shields.io/github/actions/workflow/status/nathanshankar/terminal_rviz/ros_build_humble.yml?branch=main&label=Build)](https://github.com/nathanshankar/terminal_rviz/actions/workflows/ros_build_humble.yml) |
+| **ROS 2 Iron** | [![Iron Build Status](https://img.shields.io/github/actions/workflow/status/nathanshankar/terminal_rviz/ros_build_iron.yml?branch=main&label=Build)](https://github.com/nathanshankar/terminal_rviz/actions/workflows/ros_build_iron.yml) |
+| **ROS 2 Jazzy** | [![Jazzy Build Status](https://img.shields.io/github/actions/workflow/status/nathanshankar/terminal_rviz/ros_build_jazzy.yml?branch=main&label=Build)](https://github.com/nathanshankar/terminal_rviz/actions/workflows/ros_build_jazzy.yml) |
+
+
 ## Features
 
 - **High-Density 3D Rendering**: Utilizes Braille characters (2x4 dot matrix) with dot-level Z-buffering and character-level color management.
