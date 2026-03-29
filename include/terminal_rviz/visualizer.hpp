@@ -62,22 +62,26 @@ private:
 
     int last_mouse_x_ = 0;
     int last_mouse_y_ = 0;
+    int canvas_x_offset_ = 32;
+    int canvas_y_offset_ = 2;
 
     ftxui::ScreenInteractive screen_;
     std::atomic<bool> quit_flag_{false};
 
-    // Camera State
+    // --- Animated Camera State ---
+    // Targets (Atomic for thread safety)
     std::atomic<float> tar_yaw_{0.0f};
     std::atomic<float> tar_pitch_{0.5f};
-    std::atomic<float> tar_roll_{0.0f};
     std::atomic<float> tar_dist_{5.0f};
-    std::atomic<float> cam_x_{0.0f}, cam_y_{0.0f}, cam_z_{0.0f};
-    std::atomic<float> zoom_{250.0f};
+    std::atomic<float> tar_cam_x_{0.0f}, tar_cam_y_{0.0f}, tar_cam_z_{0.0f};
+    std::atomic<float> tar_zoom_{250.0f};
 
+    // Current interpolation values
     float cur_yaw_ = 0.0f;
     float cur_pitch_ = 0.5f;
-    float cur_roll_ = 0.0f;
     float cur_dist_ = 5.0f;
+    float cur_cam_x_ = 0.0f, cur_cam_y_ = 0.0f, cur_cam_z_ = 0.0f;
+    float cur_zoom_ = 250.0f;
 };
 
 } // namespace terminal_rviz

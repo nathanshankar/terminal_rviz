@@ -106,7 +106,7 @@ void RobotModelDisplay::process_assimp_node(const aiScene* scene, const aiNode* 
                 aiVector3D v1 = cur_t * m_in->mVertices[face.mIndices[0]], v2 = cur_t * m_in->mVertices[face.mIndices[1]], v3 = cur_t * m_in->mVertices[face.mIndices[2]];
                 tf2::Vector3 A(v1.x, v1.y, v1.z), B(v2.x, v2.y, v2.z), C(v3.x, v3.y, v3.z);
                 float area = 0.5f * ((B-A).cross(C-A)).length();
-                int num = std::clamp((int)(area * 80000.0f), 2, 50);
+                int num = std::clamp((int)(area * 160000.0f), 4, 100);
                 for (int s=0; s<num; ++s) {
                     float r1 = dist(gen), r2 = dist(gen); if (r1+r2 > 1.0f) { r1=1-r1; r2=1-r2; }
                     float sr1 = std::sqrt(r1);
@@ -124,14 +124,14 @@ void RobotModelDisplay::render_geometry(urdf::GeometrySharedPtr geom, const tf2:
     auto draw_pt_tf = [&](const tf2::Vector3& p_l, ftxui::Color col) { tf2::Vector3 p = tf * p_l; renderer.draw_point(p.x(), p.y(), p.z(), col); };
     if (geom->type == urdf::Geometry::BOX) {
         auto box = std::static_pointer_cast<urdf::Box>(geom); float hx=box->dim.x/2, hy=box->dim.y/2, hz=box->dim.z/2;
-        for(float x=-hx; x<=hx; x+=0.05f) for(float y=-hy; y<=hy; y+=0.05f) { draw_pt_tf(tf2::Vector3(x,y,hz), base); draw_pt_tf(tf2::Vector3(x,y,-hz), base); }
+        for(float x=-hx; x<=hx; x+=0.025f) for(float y=-hy; y<=hy; y+=0.025f) { draw_pt_tf(tf2::Vector3(x,y,hz), base); draw_pt_tf(tf2::Vector3(x,y,-hz), base); }
     } else if (geom->type == urdf::Geometry::CYLINDER) {
         auto cyl = std::static_pointer_cast<urdf::Cylinder>(geom); float r=cyl->radius, hh=cyl->length/2;
-        for (float z=-hh; z<=hh; z+=0.05f) for (int i=0; i<20; ++i) { float a=(float)i/20*2*M_PI; draw_pt_tf(tf2::Vector3(r*cos(a),r*sin(a),z), base); }
+        for (float z=-hh; z<=hh; z+=0.025f) for (int i=0; i<40; ++i) { float a=(float)i/40*2*M_PI; draw_pt_tf(tf2::Vector3(r*cos(a),r*sin(a),z), base); }
     } else if (geom->type == urdf::Geometry::MESH) {
         auto m_u = std::static_pointer_cast<urdf::Mesh>(geom); auto mesh = get_or_load_mesh(m_u->filename); if (!mesh) return;
         tf2::Vector3 scale(m_u->scale.x, m_u->scale.y, m_u->scale.z);
-        size_t max_r = 15000, step = std::max(1UL, mesh->points.size() / max_r);
+        size_t max_r = 30000, step = std::max(1UL, mesh->points.size() / max_r);
         for (size_t i=0; i<mesh->points.size(); i+=step) {
             const auto& mp = mesh->points[i]; tf2::Vector3 p_w = tf * tf2::Vector3(mp.pos.x()*scale.x(), mp.pos.y()*scale.y(), mp.pos.z()*scale.z());
             int sx, sy; float sz; if (renderer.project(p_w.x(), p_w.y(), p_w.z(), sx, sy, sz)) renderer.plot(sx, sy, sz, has_mat ? base : mp.color);

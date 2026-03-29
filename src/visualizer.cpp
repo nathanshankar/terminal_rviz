@@ -2,6 +2,8 @@
 #include "terminal_rviz/displays/tf_display.hpp"
 #include "terminal_rviz/displays/image_display.hpp"
 #include "terminal_rviz/displays/nav2_display.hpp"
+#include "terminal_rviz/displays/map_display.hpp"
+#include <tf2_geometry_msgs/tf2_geometry_msgs.hpp>
 
 #include <chrono>
 #include <set>
@@ -54,8 +56,8 @@ void Visualizer::run() {
             ss << "T:" << get_tool_name() << " B:" << (int)mouse.button << " M:" << (int)mouse.motion;
             status_msg_ = ss.str();
 
-            if (mouse.button == Mouse::WheelUp)   { zoom_ = zoom_.load() * 1.1f; return true; }
-            if (mouse.button == Mouse::WheelDown) { zoom_ = zoom_.load() / 1.1f; return true; }
+            if (mouse.button == Mouse::WheelUp)   { tar_zoom_ = tar_zoom_.load() * 1.1f; return true; }
+            if (mouse.button == Mouse::WheelDown) { tar_zoom_ = tar_zoom_.load() / 1.1f; return true; }
 
             bool is_pressed = (mouse.motion == Mouse::Pressed);
             bool is_released = (mouse.motion == Mouse::Released);
@@ -66,14 +68,16 @@ void Visualizer::run() {
                 } else if (current_tool_ == Tool::Pan) {
                     if (is_pressed && std::abs(dx) < 50) {
                         float f = tar_dist_.load() * 0.005f, y = cur_yaw_;
-                        cam_x_ = cam_x_.load() - (dy * std::cos(y) + dx * std::sin(y)) * f;
-                        cam_y_ = cam_y_.load() - (dy * std::sin(y) - dx * std::cos(y)) * f;
+                        float dy_boosted = dy * 2.5f; 
+                        tar_cam_x_ = tar_cam_x_.load() - (dy_boosted * std::cos(y) + dx * std::sin(y)) * f;
+                        tar_cam_y_ = tar_cam_y_.load() - (dy_boosted * std::sin(y) - dx * std::cos(y)) * f;
                     }
                 } else if (current_tool_ == Tool::Nav2) {
                     std::shared_ptr<Nav2Display> nav2 = nullptr;
                     for (auto& d : displays_) if (d->getName() == "Nav2") { nav2 = std::dynamic_pointer_cast<Nav2Display>(d); break; }
                     if (nav2 && nav2->isEnabled()) {
-                        int vx = mouse.x - 32, vy = mouse.y - 2;
+                        int vx = mouse.x - canvas_x_offset_;
+                        int vy = mouse.y - canvas_y_offset_;
                         if (vx >= 0 && vy >= 0) {
                             float wx, wy; bool hit = renderer_.pick_ground_plane(vx * 2, vy * 4, wx, wy);
                             if (is_pressed && hit) {
@@ -93,8 +97,8 @@ void Visualizer::run() {
             }
             if (mouse.button == Mouse::Middle && is_pressed) {
                 float f = tar_dist_.load() * 0.005f, y = cur_yaw_;
-                cam_x_ = cam_x_.load() - (dy * std::cos(y) + dx * std::sin(y)) * f;
-                cam_y_ = cam_y_.load() - (dy * std::sin(y) - dx * std::cos(y)) * f;
+                tar_cam_x_ = tar_cam_x_.load() - (dy * 2.5f * std::cos(y) + dx * std::sin(y)) * f;
+                tar_cam_y_ = tar_cam_y_.load() - (dy * 2.5f * std::sin(y) - dx * std::cos(y)) * f;
                 return true;
             }
             return true;
@@ -168,24 +172,36 @@ Element Visualizer::render_frame() {
             if (img_disp && img_disp->getEnabledTopicCount() > 0) { image_panel = img_disp->render_2d(); right_width = 64; }
         } else if (display->getName() == "Nav2") { nav2_panel = display->render_2d(); nav2_active = true; right_width = 64; }
     }
-    
-    // Dynamic sidebar width capping to prevent collapse
     if (terminal.dimx < 120) right_width = std::min(right_width, terminal.dimx / 3);
 
     const int target_height = std::max(10, terminal.dimy - 8);
     const int target_width = std::max(10, terminal.dimx - left_width - right_width - 6);
     const int sw = target_width * 2, sh = target_height * 4;
+    
     auto c = Canvas(sw, sh);
-    cur_yaw_ += (tar_yaw_.load() - cur_yaw_) * 0.2f;
-    cur_pitch_ += (tar_pitch_.load() - cur_pitch_) * 0.2f;
-    cur_dist_ += (tar_dist_.load() - cur_dist_) * 0.2f;
+    
+    // --- Smooth Animation ---
+    const float alpha = 0.2f;
+    cur_yaw_   += (tar_yaw_.load() - cur_yaw_) * alpha;
+    cur_pitch_ += (tar_pitch_.load() - cur_pitch_) * alpha;
+    cur_dist_  += (tar_dist_.load() - cur_dist_) * alpha;
+    cur_cam_x_ += (tar_cam_x_.load() - cur_cam_x_) * alpha;
+    cur_cam_y_ += (tar_cam_y_.load() - cur_cam_y_) * alpha;
+    cur_cam_z_ += (tar_cam_z_.load() - cur_cam_z_) * alpha;
+    cur_zoom_  += (tar_zoom_.load() - cur_zoom_) * alpha;
+
     renderer_.set_size(sw, sh);
-    renderer_.set_camera(cur_yaw_, cur_pitch_, 0.0f, cur_dist_, cam_x_.load(), cam_y_.load(), cam_z_.load());
-    renderer_.set_zoom(zoom_.load());
+    renderer_.set_camera(cur_yaw_, cur_pitch_, 0.0f, cur_dist_, cur_cam_x_, cur_cam_y_, cur_cam_z_);
+    renderer_.set_zoom(cur_zoom_);
     renderer_.clear();
+    
     if (grid_display_) grid_display_->render(renderer_, c, fixed_frame_, tf_buffer_);
     for (auto& display : displays_) display->render(renderer_, c, fixed_frame_, tf_buffer_);
     renderer_.finish(c);
+
+    // Update dynamic offsets for mouse picking (left_width=30 + 2 for border/padding, top=2)
+    canvas_x_offset_ = left_width + 2;
+    canvas_y_offset_ = 2;
 
     Elements display_list;
     for (size_t i = 0; i < displays_.size(); ++i) {
@@ -233,7 +249,7 @@ Element Visualizer::render_frame() {
             separator(),
             text(" Frame: " + fixed_frame_) | color(Color::Cyan),
             filler(),
-            text(" [V] Tool | [R] Reset | [G] Grid | [Tab] Select | [T/Y] Navigate | [Space] Toggle | [Q] Quit ") | dim
+            text(" [V] Tool | [R] Reset | [M] TopDown | [G] Grid | [Tab] Select | [Space] Toggle | [Q] Quit ") | dim
         }),
         separator(),
         hbox({
@@ -251,10 +267,7 @@ Element Visualizer::render_frame() {
                 text(status_msg_) | color(Color::Green) | size(HEIGHT, EQUAL, 2),
             }) | size(WIDTH, EQUAL, left_width),
             canvas(std::move(c)) | center | flex | border,
-            vbox({
-                image_panel | flex,
-                nav2_active ? nav2_panel : filler(),
-            }) | size(WIDTH, EQUAL, right_width),
+            vbox({ image_panel | flex, nav2_active ? nav2_panel : filler(), }) | size(WIDTH, EQUAL, right_width),
         }) | flex
     }) | border;
 }
@@ -282,23 +295,55 @@ bool Visualizer::handle_event(Event event) {
         if (displays_[plugin_idx_]->handle_event(event)) return true;
     }
 
-    if (event == Event::ArrowUp)    { cam_z_ = cam_z_.load() + 0.5f; return true; }
-    if (event == Event::ArrowDown)  { cam_z_ = cam_z_.load() - 0.5f; return true; }
-    if (event == Event::ArrowLeft)  { cam_y_ = cam_y_.load() + 0.5f; return true; }
-    if (event == Event::ArrowRight) { cam_y_ = cam_y_.load() - 0.5f; return true; }
-    if (event == Event::PageUp)     { cam_x_ = cam_x_.load() + 0.5f; return true; }
-    if (event == Event::PageDown)   { cam_x_ = cam_x_.load() - 0.5f; return true; }
+    if (event == Event::ArrowUp)    { tar_cam_z_ = tar_cam_z_.load() + 0.5f; return true; }
+    if (event == Event::ArrowDown)  { tar_cam_z_ = tar_cam_z_.load() - 0.5f; return true; }
+    if (event == Event::ArrowLeft)  { tar_cam_y_ = tar_cam_y_.load() + 0.5f; return true; }
+    if (event == Event::ArrowRight) { tar_cam_y_ = tar_cam_y_.load() - 0.5f; return true; }
+    if (event == Event::PageUp)     { tar_cam_x_ = tar_cam_x_.load() + 0.5f; return true; }
+    if (event == Event::PageDown)   { tar_cam_x_ = tar_cam_x_.load() - 0.5f; return true; }
     if (event == Event::Character('a')) { tar_yaw_ = tar_yaw_.load() - 0.1f; return true; }
     if (event == Event::Character('d')) { tar_yaw_ = tar_yaw_.load() + 0.1f; return true; }
     if (event == Event::Character('w')) { tar_pitch_ = tar_pitch_.load() + 0.1f; return true; }
     if (event == Event::Character('s')) { tar_pitch_ = tar_pitch_.load() - 0.1f; return true; }
     if (event == Event::Character('r') || event == Event::Character('R')) {
         tar_yaw_ = 0.0f; tar_pitch_ = 0.5f; tar_dist_ = 5.0f;
-        cam_x_ = 0.0f; cam_y_ = 0.0f; cam_z_ = 0.0f; zoom_ = 250.0f;
+        tar_cam_x_ = 0.0f; tar_cam_y_ = 0.0f; tar_cam_z_ = 0.0f; tar_zoom_ = 250.0f;
         return true;
     }
-    if (event == Event::Character('+') || event == Event::Character('=')) { zoom_ = zoom_.load() * 1.1f; return true; }
-    if (event == Event::Character('-') || event == Event::Character('_')) { zoom_ = zoom_.load() / 1.1f; return true; }
+    if (event == Event::Character('m') || event == Event::Character('M')) {
+        float cx = 0.0f, cy = 0.0f, zoom = 100.0f;
+        
+        // 1. Find Map Display and get its raw bounds
+        for (auto& d : displays_) {
+            if (d->getName() == "Map") {
+                auto md = std::dynamic_pointer_cast<MapDisplay>(d);
+                if (md) {
+                    float raw_cx = md->getCenterX(), raw_cy = md->getCenterY();
+                    float mw = md->getWidth(), mh = md->getHeight();
+                    
+                    // Transform raw map center (in 'map' frame) to current fixed_frame_
+                    try {
+                        auto t = tf_buffer_->lookupTransform(fixed_frame_, "map", tf2::TimePointZero);
+                        tf2::Vector3 map_origin(raw_cx, raw_cy, 0.0f);
+                        tf2::Transform tf; tf2::fromMsg(t.transform, tf);
+                        tf2::Vector3 target = tf * map_origin;
+                        cx = target.x(); cy = target.y();
+                    } catch (...) {
+                        cx = raw_cx; cy = raw_cy; // Fallback
+                    }
+                    
+                    float max_dim = std::max(mw, mh);
+                    if (max_dim > 0.1f) zoom = 1500.0f / max_dim; 
+                }
+                break;
+            }
+        }
+        tar_pitch_ = 1.57f; tar_yaw_ = 0.0f; tar_dist_ = 10.0f;
+        tar_cam_x_ = cx; tar_cam_y_ = cy; tar_cam_z_ = 0.0f; tar_zoom_ = zoom;
+        return true;
+    }
+    if (event == Event::Character('+') || event == Event::Character('=')) { tar_zoom_ = tar_zoom_.load() * 1.1f; return true; }
+    if (event == Event::Character('-') || event == Event::Character('_')) { tar_zoom_ = tar_zoom_.load() / 1.1f; return true; }
     if (event == Event::Character('g') || event == Event::Character('G')) { if (grid_display_) grid_display_->toggle(); return true; }
     if (event == Event::Character('v') || event == Event::Character('V')) { cycle_tool(); return true; }
     if (event == Event::Tab) { plugin_idx_ = (plugin_idx_ + 1) % (int)displays_.size(); discover_topics(); return true; }
@@ -310,11 +355,8 @@ bool Visualizer::handle_event(Event event) {
         if (!available_topics_.empty()) {
             topic_idx_ = (topic_idx_ - 1 + available_topics_.size()) % available_topics_.size();
             if (plugin_idx_ >= 0) {
-                auto disp = displays_[plugin_idx_];
-                std::string type = disp->getMessageType();
-                if (type != "TF" && type != "sensor_msgs/msg/Image" && type != "None") {
-                    disp->setTopic(available_topics_[topic_idx_]);
-                }
+                auto disp = displays_[plugin_idx_]; std::string type = disp->getMessageType();
+                if (type != "TF" && type != "sensor_msgs/msg/Image" && type != "None") disp->setTopic(available_topics_[topic_idx_]);
             }
         }
         return true;
@@ -323,11 +365,8 @@ bool Visualizer::handle_event(Event event) {
         if (!available_topics_.empty()) {
             topic_idx_ = (topic_idx_ + 1) % available_topics_.size();
             if (plugin_idx_ >= 0) {
-                auto disp = displays_[plugin_idx_];
-                std::string type = disp->getMessageType();
-                if (type != "TF" && type != "sensor_msgs/msg/Image" && type != "None") {
-                    disp->setTopic(available_topics_[topic_idx_]);
-                }
+                auto disp = displays_[plugin_idx_]; std::string type = disp->getMessageType();
+                if (type != "TF" && type != "sensor_msgs/msg/Image" && type != "None") disp->setTopic(available_topics_[topic_idx_]);
             }
         }
         return true;

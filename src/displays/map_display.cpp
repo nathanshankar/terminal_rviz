@@ -24,7 +24,13 @@ void MapDisplay::setTopic(const std::string& topic) {
 
 void MapDisplay::callback(const nav_msgs::msg::OccupancyGrid::SharedPtr msg) {
     std::lock_guard<std::mutex> lock(mtx_);
-    current_msg_ = msg;
+    latest_map_ = msg;
+
+    // Calculate Map Center in its own frame
+    map_width_m_ = msg->info.width * msg->info.resolution;
+    map_height_m_ = msg->info.height * msg->info.resolution;
+    map_center_x_ = msg->info.origin.position.x + (map_width_m_ / 2.0f);
+    map_center_y_ = msg->info.origin.position.y + (map_height_m_ / 2.0f);
 }
 
 void MapDisplay::render(RvizRenderer& renderer, ftxui::Canvas& canvas, const std::string& fixed_frame, std::shared_ptr<tf2_ros::Buffer> tf_buffer) {
@@ -33,7 +39,7 @@ void MapDisplay::render(RvizRenderer& renderer, ftxui::Canvas& canvas, const std
     nav_msgs::msg::OccupancyGrid::SharedPtr msg;
     {
         std::lock_guard<std::mutex> lock(mtx_);
-        msg = current_msg_;
+        msg = latest_map_;
     }
 
     if (!msg) return;
@@ -76,8 +82,8 @@ void MapDisplay::render(RvizRenderer& renderer, ftxui::Canvas& canvas, const std
         tf2::Vector3 p_world = map_to_world * p_local;
 
         ftxui::Color col;
-        if (val > 50) col = ftxui::Color::GrayDark; // Occupied (Wall)
-        else col = ftxui::Color::RGB(50, 50, 50);    // Free space (Floor)
+        if (val > 50) col = ftxui::Color::Magenta; // Occupied (High Contrast)
+        else col = ftxui::Color::White;            // Known / Free space
 
         renderer.draw_point(p_world.x(), p_world.y(), p_world.z(), col);
     }

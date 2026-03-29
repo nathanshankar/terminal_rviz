@@ -18,13 +18,22 @@ public:
     void setTopic(const std::string& topic) override;
     std::string getMessageType() const override { return "nav_msgs/msg/OccupancyGrid"; }
 
-private:
+    float getCenterX() const { return map_center_x_; }
+    float getCenterY() const { return map_center_y_; }
+    float getWidth() const { return map_width_m_; }
+    float getHeight() const { return map_height_m_; }
+
+    private:
     void callback(const nav_msgs::msg::OccupancyGrid::SharedPtr msg);
 
     rclcpp::Subscription<nav_msgs::msg::OccupancyGrid>::SharedPtr sub_;
     std::mutex mtx_;
-    nav_msgs::msg::OccupancyGrid::SharedPtr current_msg_;
-};
+    nav_msgs::msg::OccupancyGrid::SharedPtr latest_map_;
+    float map_center_x_ = 0.0f;
+    float map_center_y_ = 0.0f;
+    float map_width_m_ = 10.0f;
+    float map_height_m_ = 10.0f;
+    };
 
 } // namespace terminal_rviz
 
