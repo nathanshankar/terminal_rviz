@@ -34,7 +34,6 @@ void LaserScanDisplay::render(RvizRenderer& renderer, ftxui::Canvas& canvas, con
 
     if (!msg) return;
 
-    // Get transform from laser frame to fixed frame
     tf2::Transform laser_to_world;
     try {
         auto transform_msg = tf_buffer->lookupTransform(fixed_frame, msg->header.frame_id, tf2::TimePointZero);
@@ -47,7 +46,7 @@ void LaserScanDisplay::render(RvizRenderer& renderer, ftxui::Canvas& canvas, con
         if (r >= msg->range_min && r <= msg->range_max) {
             tf2::Vector3 p_local(r * std::cos(angle), r * std::sin(angle), 0.0f);
             tf2::Vector3 p_world = laser_to_world * p_local;
-            renderer.draw_point(p_world.x(), p_world.y(), p_world.z(), ftxui::Color::Red, canvas);
+            renderer.draw_point(p_world.x(), p_world.y(), p_world.z(), ftxui::Color::Red);
         }
         angle += msg->angle_increment;
     }

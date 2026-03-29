@@ -54,9 +54,7 @@ void MapDisplay::render(RvizRenderer& renderer, ftxui::Canvas& canvas, const std
             int yi = i / width;
             tf2::Vector3 p_local(ox + xi * res, oy + yi * res, -0.01f);
             tf2::Vector3 p_world = map_to_world * p_local;
-            renderer.plot(0, 0, 0, ftxui::Color::GrayLight, canvas); // Dummy to get projected, better call renderer correctly
-            // Actually just draw the point in world space
-            renderer.draw_point(p_world.x(), p_world.y(), p_world.z(), ftxui::Color::GrayLight, canvas);
+            renderer.draw_point(p_world.x(), p_world.y(), p_world.z(), ftxui::Color::GrayLight);
         }
     }
 }

@@ -2,12 +2,8 @@
 #define TERMINAL_RVIZ_RENDERER_HPP_
 
 #include <vector>
-#include <string>
 #include <cmath>
 #include <algorithm>
-#include <atomic>
-#include <mutex>
-
 #include "ftxui/screen/color.hpp"
 #include "ftxui/dom/canvas.hpp"
 
@@ -23,10 +19,11 @@ public:
     
     void clear();
     
-    void draw_point(float x, float y, float z, ftxui::Color color, ftxui::Canvas& canvas);
-    void draw_line(float x1, float y1, float z1, float x2, float y2, float z2, ftxui::Color color, ftxui::Canvas& canvas);
+    void draw_point(float x, float y, float z, ftxui::Color color);
+    void draw_line(float x1, float y1, float z1, float x2, float y2, float z2, ftxui::Color color);
     
-    void plot(int x, int y, float z, ftxui::Color color, ftxui::Canvas& canvas);
+    void plot(int x, int y, float z, ftxui::Color color);
+    void finish(ftxui::Canvas& canvas);
 
     bool project(float dx, float dy, float dz, int& out_sx, int& out_sy, float& out_z) const;
 
@@ -34,16 +31,12 @@ private:
     int width_ = 0;
     int height_ = 0;
     
-    float yaw_ = 0.0f;
-    float pitch_ = 0.0f;
-    float roll_ = 0.0f;
-    float dist_ = 5.0f;
-    float zoom_ = 100.0f;
-    float cx_ = 0.0f;
-    float cy_ = 0.0f;
-    float cz_ = 0.0f;
+    float yaw_ = 0.0f, pitch_ = 0.0f, roll_ = 0.0f, dist_ = 5.0f, zoom_ = 100.0f;
+    float cx_ = 0.0f, cy_ = 0.0f, cz_ = 0.0f;
 
     std::vector<float> z_buffer_;
+    std::vector<float> char_z_buffer_;
+    std::vector<ftxui::Color> char_colors_;
 };
 
 } // namespace terminal_rviz

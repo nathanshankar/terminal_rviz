@@ -32,31 +32,16 @@ void ImageDisplay::render(RvizRenderer& renderer, ftxui::Canvas& canvas, const s
 
     if (!msg) return;
 
-    // Render image as a small overlay or in corner
-    // For now, let's just project it to a plane in 3D or draw in 2D
-    // Drawing in 2D (top-left)
-    
-    int img_w = msg->width;
-    int img_h = msg->height;
-    
-    // Subsample to fit in a small corner
-    int target_w = 40;
-    int target_h = 30;
-    
-    float sw = (float)img_w / target_w;
-    float sh = (float)img_h / target_h;
+    int img_w = msg->width, img_h = msg->height;
+    int target_w = 40, target_h = 30;
+    float sw = (float)img_w / target_w, sh = (float)img_h / target_h;
 
     for (int y = 0; y < target_h; ++y) {
         for (int x = 0; x < target_w; ++x) {
-            int ix = (int)(x * sw);
-            int iy = (int)(y * sh);
-            
-            size_t idx = (iy * msg->step) + (ix * 3); // Assuming RGB8
+            int ix = (int)(x * sw), iy = (int)(y * sh);
+            size_t idx = (iy * msg->step) + (ix * 3);
             if (idx + 2 < msg->data.size()) {
-                uint8_t r = msg->data[idx];
-                uint8_t g = msg->data[idx+1];
-                uint8_t b = msg->data[idx+2];
-                canvas.DrawPoint(x, y, true, ftxui::Color::RGB(r, g, b));
+                renderer.plot(x, y, -10.0f, ftxui::Color::RGB(msg->data[idx], msg->data[idx+1], msg->data[idx+2]));
             }
         }
     }

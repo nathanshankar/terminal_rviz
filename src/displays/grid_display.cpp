@@ -12,12 +12,8 @@ void GridDisplay::render(RvizRenderer& renderer, ftxui::Canvas& canvas, const st
 
     for (int i = 0; i <= cell_count_; ++i) {
         float offset = -half_size + i * cell_size_;
-        
-        // Lines parallel to Y axis
-        renderer.draw_line(offset, -half_size, 0.0f, offset, half_size, 0.0f, color_, canvas);
-        
-        // Lines parallel to X axis
-        renderer.draw_line(-half_size, offset, 0.0f, half_size, offset, 0.0f, color_, canvas);
+        renderer.draw_line(offset, -half_size, 0.0f, offset, half_size, 0.0f, color_);
+        renderer.draw_line(-half_size, offset, 0.0f, half_size, offset, 0.0f, color_);
     }
 }
 

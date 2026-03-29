@@ -57,15 +57,15 @@ void TFDisplay::render(RvizRenderer& renderer, ftxui::Canvas& canvas, const std:
 
             // X (Red)
             tf2::Vector3 x_pt = tf * tf2::Vector3(axis_len, 0, 0);
-            renderer.draw_line(tx, ty, tz, x_pt.x(), x_pt.y(), x_pt.z(), ftxui::Color::Red, canvas);
+            renderer.draw_line(tx, ty, tz, x_pt.x(), x_pt.y(), x_pt.z(), ftxui::Color::Red);
 
             // Y (Green)
             tf2::Vector3 y_pt = tf * tf2::Vector3(0, axis_len, 0);
-            renderer.draw_line(tx, ty, tz, y_pt.x(), y_pt.y(), y_pt.z(), ftxui::Color::Green, canvas);
+            renderer.draw_line(tx, ty, tz, y_pt.x(), y_pt.y(), y_pt.z(), ftxui::Color::Green);
 
             // Z (Blue)
             tf2::Vector3 z_pt = tf * tf2::Vector3(0, 0, axis_len);
-            renderer.draw_line(tx, ty, tz, z_pt.x(), z_pt.y(), z_pt.z(), ftxui::Color::Blue, canvas);
+            renderer.draw_line(tx, ty, tz, z_pt.x(), z_pt.y(), z_pt.z(), ftxui::Color::Blue);
 
         } catch (...) {
             continue;

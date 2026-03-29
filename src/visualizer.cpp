@@ -139,6 +139,7 @@ Element Visualizer::render_frame() {
 
     if (grid_display_) grid_display_->render(renderer_, c, fixed_frame_, tf_buffer_);
     for (auto& display : displays_) display->render(renderer_, c, fixed_frame_, tf_buffer_);
+    renderer_.finish(c);
 
     Elements display_list;
     if (grid_display_) {
