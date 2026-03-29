@@ -2,7 +2,7 @@ cmake_minimum_required(VERSION 3.8)
 project(terminal_rviz)
 
 if(CMAKE_COMPILER_IS_GNUCXX OR CMAKE_CXX_COMPILER_ID MATCHES "Clang")
-  add_compile_options(-Wall -Wextra -Wpedantic -O3)
+  add_compile_options(-Wall -Wextra -Wpedantic)
 endif()
 
 # Find dependencies
@@ -21,9 +21,13 @@ find_package(urdfdom_headers REQUIRED)
 find_package(ament_index_cpp REQUIRED)
 find_package(assimp REQUIRED)
 find_package(std_msgs REQUIRED)
-find_package(nav2_msgs QUIET)
 find_package(action_msgs REQUIRED)
-find_package(actionlib_msgs REQUIRED)
+
+# Optional Nav2
+find_package(nav2_msgs QUIET)
+if(nav2_msgs_FOUND)
+  add_definitions(-DHAS_NAV2_MSGS)
+endif()
 
 # Fetch FTXUI
 include(FetchContent)
@@ -33,26 +37,26 @@ FetchContent_Declare(ftxui
 )
 FetchContent_MakeAvailable(ftxui)
 
-# Create a library for the core visualizer/renderer
+include_directories(include)
+
+# Helper for Assimp
+find_package(PkgConfig REQUIRED)
+pkg_check_modules(ASSIMP assimp)
+
 add_library(${PROJECT_NAME}_core
   src/renderer.cpp
   src/display.cpp
+  src/visualizer.cpp
   src/displays/grid_display.cpp
-  src/displays/pointcloud_display.cpp
-  src/displays/marker_display.cpp
   src/displays/tf_display.cpp
+  src/displays/pointcloud_display.cpp
   src/displays/laserscan_display.cpp
   src/displays/map_display.cpp
-  src/displays/odometry_display.cpp
+  src/displays/marker_display.cpp
   src/displays/image_display.cpp
-  src/displays/robot_model_display.cpp
+  src/displays/odometry_display.cpp
   src/displays/nav2_display.cpp
-)
-
-target_include_directories(${PROJECT_NAME}_core PUBLIC
-  $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/include>
-  $<INSTALL_INTERFACE:include>
-  ${ASSIMP_INCLUDE_DIRS}
+  src/displays/robot_model_display.cpp
 )
 
 target_compile_features(${PROJECT_NAME}_core PUBLIC cxx_std_17)
@@ -71,10 +75,12 @@ ament_target_dependencies(${PROJECT_NAME}_core
   urdfdom_headers
   ament_index_cpp
   std_msgs
-  nav2_msgs
   action_msgs
-  actionlib_msgs
 )
+
+if(nav2_msgs_FOUND)
+  ament_target_dependencies(${PROJECT_NAME}_core nav2_msgs)
+endif()
 
 target_link_libraries(${PROJECT_NAME}_core
   ftxui::screen
@@ -83,43 +89,18 @@ target_link_libraries(${PROJECT_NAME}_core
   ${ASSIMP_LIBRARIES}
 )
 
-# Main executable
-add_executable(terminal_rviz_node
-  src/terminal_rviz_node.cpp
-  src/visualizer.cpp
-)
+add_executable(terminal_rviz_node src/terminal_rviz_node.cpp)
+target_link_libraries(terminal_rviz_node ${PROJECT_NAME}_core)
 
-target_include_directories(terminal_rviz_node PUBLIC
-  $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/include>
-  $<INSTALL_INTERFACE:include>
-)
-
-ament_target_dependencies(terminal_rviz_node
-  rclcpp
-  sensor_msgs
-  visualization_msgs
-  geometry_msgs
-  tf2
-  tf2_ros
-  tf2_geometry_msgs
-  nav_msgs
-  urdf
-  urdfdom_headers
-  ament_index_cpp
-  std_msgs
-  nav2_msgs
-  action_msgs
-  actionlib_msgs
-)
-
-target_link_libraries(terminal_rviz_node
-  ${PROJECT_NAME}_core
-  ${ASSIMP_LIBRARIES}
-)
-
-install(TARGETS 
-  ${PROJECT_NAME}_core
-  terminal_rviz_node
+install(TARGETS ${PROJECT_NAME}_core terminal_rviz_node
   DESTINATION lib/${PROJECT_NAME})
+
+install(DIRECTORY include/
+  DESTINATION include)
+
+if(BUILD_TESTING)
+  find_package(ament_lint_auto REQUIRED)
+  ament_lint_auto_find_test_dependencies()
+endif()
 
 ament_package()

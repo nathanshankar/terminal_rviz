@@ -7,8 +7,8 @@
 
 #include "geometry_msgs/msg/pose_stamped.hpp"
 
-// Conditional include for Nav2 Actions (Not available in Foxy)
-#if __has_include(<nav2_msgs/action/navigate_through_poses.hpp>)
+// HAS_NAV2_MSGS is defined in CMakeLists.txt if nav2_msgs is found
+#ifdef HAS_NAV2_MSGS
 #include "nav2_msgs/action/navigate_through_poses.hpp"
 #define HAS_NAV2_ACTIONS
 #endif
