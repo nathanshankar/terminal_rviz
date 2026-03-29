@@ -1,0 +1,41 @@
+name: ROS 2 CI Iron
+
+on:
+  push:
+    branches: [ main ]
+  pull_request:
+    branches: [ main ]
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    container:
+      image: ros:iron-ros-base-jammy
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install dependencies
+        shell: bash
+        run: |
+          apt update && apt install -y curl gnupg lsb-release
+          curl https://packages.osrfoundation.org/gazebo.gpg --output /usr/share/keyrings/pkgs-osrf-archive-keyring.gpg
+          echo "deb [arch=$(dpkg --print-architecture) signed-by=/usr/share/keyrings/pkgs-osrf-archive-keyring.gpg] http://packages.osrfoundation.org/gazebo/ubuntu-stable $(lsb_release -cs) main" | tee /etc/apt/sources.list.d/gazebo-stable.list > /dev/null
+          apt update
+
+      - name: Install Build Essentials
+        shell: bash
+        run: |
+          apt update
+          apt install -y build-essential cmake git libassimp-dev
+
+      - name: rosdep install
+        shell: bash
+        run: |
+          rosdep update
+          rosdep install --from-paths . --ignore-src -r -y
+
+      - name: build
+        shell: bash
+        run: |
+          . /opt/ros/iron/setup.sh
+          colcon build --symlink-install --cmake-args -DCMAKE_BUILD_TYPE=Release

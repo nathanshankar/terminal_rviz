@@ -21,7 +21,7 @@ void RobotModelDisplay::setTopic(const std::string& topic) {
     try {
         sub_.reset();
         topic_ = topic;
-        RCLCPP_INFO(node_->get_logger(), "RobotModel: Subscribing to %s", topic_.c_str());
+        // RCLCPP_INFO(node_->get_logger(), "RobotModel: Subscribing to %s", topic_.c_str());
         sub_ = node_->create_subscription<std_msgs::msg::String>(
             topic_, rclcpp::QoS(1).transient_local(), std::bind(&RobotModelDisplay::callback, this, std::placeholders::_1));
     } catch (const std::exception& e) {
@@ -131,10 +131,13 @@ void RobotModelDisplay::render_geometry(urdf::GeometrySharedPtr geom, const tf2:
     } else if (geom->type == urdf::Geometry::MESH) {
         auto m_u = std::static_pointer_cast<urdf::Mesh>(geom); auto mesh = get_or_load_mesh(m_u->filename); if (!mesh) return;
         tf2::Vector3 scale(m_u->scale.x, m_u->scale.y, m_u->scale.z);
+        // Optimized mesh rendering: adaptive skip and pre-multiplied scale
         size_t max_r = 30000, step = std::max(1UL, mesh->points.size() / max_r);
         for (size_t i=0; i<mesh->points.size(); i+=step) {
-            const auto& mp = mesh->points[i]; tf2::Vector3 p_w = tf * tf2::Vector3(mp.pos.x()*scale.x(), mp.pos.y()*scale.y(), mp.pos.z()*scale.z());
-            int sx, sy; float sz; if (renderer.project(p_w.x(), p_w.y(), p_w.z(), sx, sy, sz)) renderer.plot(sx, sy, sz, has_mat ? base : mp.color);
+            const auto& mp = mesh->points[i];
+            tf2::Vector3 p_scaled(mp.pos.x()*scale.x(), mp.pos.y()*scale.y(), mp.pos.z()*scale.z());
+            tf2::Vector3 p_w = tf * p_scaled;
+            renderer.draw_point(p_w.x(), p_w.y(), p_w.z(), has_mat ? base : mp.color);
         }
     }
 }

@@ -41,6 +41,7 @@ private:
     std::vector<float> z_buffer_;
     std::vector<float> char_z_buffer_;
     std::vector<ftxui::Color> char_colors_;
+    std::vector<int> dirty_cells_;
 };
 
 } // namespace terminal_rviz
