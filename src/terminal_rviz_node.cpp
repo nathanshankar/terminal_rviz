@@ -12,6 +12,7 @@
 #include "terminal_rviz/displays/odometry_display.hpp"
 #include "terminal_rviz/displays/image_display.hpp"
 #include "terminal_rviz/displays/robot_model_display.hpp"
+#include "terminal_rviz/displays/nav2_display.hpp"
 
 using namespace terminal_rviz;
 
@@ -83,8 +84,8 @@ int main(int argc, char** argv) {
     visualizer->add_display(odom);
 
     // 0: Nav2
-    auto nav2 = std::make_shared<DummyDisplay>("Nav2", node);
-    nav2->setEnabled(false);
+    auto nav2 = std::make_shared<Nav2Display>(node);
+    nav2->onInitialize();
     visualizer->add_display(nav2);
 
     std::thread ros_thread([&]() {

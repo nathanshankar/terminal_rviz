@@ -20,6 +20,9 @@ find_package(urdfdom_headers REQUIRED)
 find_package(ament_index_cpp REQUIRED)
 find_package(assimp REQUIRED)
 find_package(std_msgs REQUIRED)
+find_package(nav2_msgs REQUIRED)
+find_package(action_msgs REQUIRED)
+find_package(actionlib_msgs REQUIRED)
 
 # Fetch FTXUI
 include(FetchContent)
@@ -42,6 +45,7 @@ add_library(${PROJECT_NAME}_core
   src/displays/odometry_display.cpp
   src/displays/image_display.cpp
   src/displays/robot_model_display.cpp
+  src/displays/nav2_display.cpp
 )
 
 target_include_directories(${PROJECT_NAME}_core PUBLIC
@@ -65,6 +69,9 @@ ament_target_dependencies(${PROJECT_NAME}_core
   urdfdom_headers
   ament_index_cpp
   std_msgs
+  nav2_msgs
+  action_msgs
+  actionlib_msgs
 )
 
 target_link_libraries(${PROJECT_NAME}_core
@@ -98,6 +105,9 @@ ament_target_dependencies(terminal_rviz_node
   urdfdom_headers
   ament_index_cpp
   std_msgs
+  nav2_msgs
+  action_msgs
+  actionlib_msgs
 )
 
 target_link_libraries(terminal_rviz_node

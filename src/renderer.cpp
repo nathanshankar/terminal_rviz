@@ -42,6 +42,73 @@ bool RvizRenderer::project(float dx, float dy, float dz, int& out_sx, int& out_s
     return false;
 }
 
+bool RvizRenderer::pick_ground_plane(int sx, int sy, float& out_x, float& out_y) const {
+    if (width_ == 0 || height_ == 0) return false;
+
+    // Convert screen dots to camera-space normalized ray
+    float nx = (static_cast<float>(sx) - (width_ / 2.0f)) / zoom_;
+    float ny = (static_cast<float>(sy) - (height_ / 2.0f)) / zoom_;
+
+    // In project, we had:
+    // out_sx = (width_ / 2) + (zoom_ * x3 / (z2 + dist_))
+    // out_sy = (height_ / 2) + (zoom_ * y3 / (z2 + dist_))
+    // This is hard to invert exactly because we don't know the depth.
+    // But we know Z_world = 0.
+    
+    // Simplification: assume camera is mostly looking down/forward.
+    // Let's use a numerical approach or a more direct ray-plane intersection.
+    // Ray in camera space starts at origin (0,0,-dist_) and goes through (nx, ny, 0)
+    // Camera space Z is forward.
+    
+    float s_yaw = std::sin(yaw_), c_yaw = std::cos(yaw_);
+    float s_pitch = std::sin(pitch_), c_pitch = std::cos(pitch_);
+    float s_roll = std::sin(roll_), c_roll = std::cos(roll_);
+
+    // Un-rotate the ray from camera space back to ROS world space
+    // This is the inverse of the rotation matrix used in 'project'
+    auto unrotate = [&](float x, float y, float z, float& ox, float& oy, float& oz) {
+        // Inverse Roll
+        float x1 = x * c_roll + y * s_roll;
+        float y1 = -x * s_roll + y * c_roll;
+        float z1 = z;
+        // Inverse Pitch
+        float x2 = x1;
+        float y2 = y1 * c_pitch + z1 * s_pitch;
+        float z2 = -y1 * s_pitch + z1 * c_pitch;
+        // Inverse Yaw
+        float rx = x2 * c_yaw - z2 * s_yaw;
+        float ry = y2;
+        float rz = x2 * s_yaw + z2 * c_yaw;
+        // ROS conversion
+        ox = rz + cx_;
+        oy = -rx + cy_;
+        oz = -ry + cz_;
+    };
+
+    // Camera origin in world space
+    float cam_world_x, cam_world_y, cam_world_z;
+    unrotate(0, 0, -dist_, cam_world_x, cam_world_y, cam_world_z);
+
+    // Point on image plane in world space
+    float ray_world_x, ray_world_y, ray_world_z;
+    unrotate(nx, ny, 1.0f - dist_, ray_world_x, ray_world_y, ray_world_z);
+
+    // Ray direction
+    float dx = ray_world_x - cam_world_x;
+    float dy = ray_world_y - cam_world_y;
+    float dz = ray_world_z - cam_world_z;
+
+    if (std::abs(dz) < 1e-6) return false;
+
+    // Intersection with Z=0 plane: cam_world_z + t * dz = 0
+    float t = -cam_world_z / dz;
+    if (t < 0) return false; // Plane is behind camera
+
+    out_x = cam_world_x + t * dx;
+    out_y = cam_world_y + t * dy;
+    return true;
+}
+
 void RvizRenderer::plot(int x, int y, float z, ftxui::Color color) {
     if (x < 0 || x >= width_ || y < 0 || y >= height_) return;
     int idx = y * width_ + x;

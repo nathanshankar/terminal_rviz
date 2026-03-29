@@ -26,6 +26,7 @@ public:
     void finish(ftxui::Canvas& canvas);
 
     bool project(float dx, float dy, float dz, int& out_sx, int& out_sy, float& out_z) const;
+    bool pick_ground_plane(int sx, int sy, float& out_x, float& out_y) const;
 
     int get_width() const { return width_; }
     int get_height() const { return height_; }

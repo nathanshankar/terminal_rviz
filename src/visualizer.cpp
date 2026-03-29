@@ -1,6 +1,7 @@
 #include "terminal_rviz/visualizer.hpp"
 #include "terminal_rviz/displays/tf_display.hpp"
 #include "terminal_rviz/displays/image_display.hpp"
+#include "terminal_rviz/displays/nav2_display.hpp"
 
 #include <chrono>
 #include <set>
@@ -27,7 +28,44 @@ void Visualizer::add_display(std::shared_ptr<Display> display) {
 
 void Visualizer::run() {
     auto main_renderer = Renderer([this]() { return render_frame(); });
-    auto component = CatchEvent(main_renderer, [this](Event event) { return handle_event(event); });
+    
+    // Enable mouse events for picking
+    auto component = CatchEvent(main_renderer, [this](Event event) { 
+        if (event.is_mouse()) {
+            auto mouse = event.mouse();
+            int click_x = mouse.x - 32;
+            int click_y = mouse.y - 2;
+            
+            if (click_x >= 0 && click_y >= 0) {
+                if (plugin_idx_ >= 0 && plugin_idx_ < (int)displays_.size()) {
+                    auto nav2 = std::dynamic_pointer_cast<Nav2Display>(displays_[plugin_idx_]);
+                    if (nav2) {
+                        float wx, wy;
+                        bool hit = renderer_.pick_ground_plane(click_x * 2, click_y * 4, wx, wy);
+                        
+                        if (mouse.button == Mouse::Left) {
+                            if (mouse.motion == Mouse::Pressed && hit) {
+                                if (!nav2->is_selecting()) {
+                                    nav2->set_goal(wx, wy, fixed_frame_);
+                                    nav2->start_selection();
+                                } else {
+                                    nav2->update_goal_orientation(wx, wy);
+                                }
+                                return true;
+                            } else if (mouse.motion == Mouse::Released) {
+                                if (hit) nav2->update_goal_orientation(wx, wy);
+                                nav2->finalize_selection();
+                                // Selection finished, but don't send yet.
+                                // User must press Space to confirm.
+                                return true;
+                            }
+                        }
+                    }
+                }
+            }
+        }
+        return handle_event(event); 
+    });
 
     std::thread ui_thread([&]() {
         while (!quit_flag_ && rclcpp::ok()) {
@@ -258,10 +296,27 @@ bool Visualizer::handle_event(Event event) {
             if (disp->getMessageType() == "TF" && !available_topics_.empty()) {
                 auto tf_disp = std::dynamic_pointer_cast<TFDisplay>(disp);
                 if (tf_disp) { tf_disp->toggleFrame(available_topics_[topic_idx_]); return true; }
+            } else if (disp->getMessageType() == "Nav2") {
+                auto nav2 = std::dynamic_pointer_cast<Nav2Display>(disp);
+                if (nav2) { nav2->send_goal(); return true; }
             } else if (!available_topics_.empty()) {
                 disp->setTopic(available_topics_[topic_idx_]);
                 return true;
             }
+        }
+    }
+
+    if (event == Event::Character('r') || event == Event::Character('R')) {
+        if (plugin_idx_ >= 0 && plugin_idx_ < (int)displays_.size()) {
+            auto nav2 = std::dynamic_pointer_cast<Nav2Display>(displays_[plugin_idx_]);
+            if (nav2) { nav2->cancel_nav(); return true; }
+        }
+    }
+
+    if (event == Event::Character('m') || event == Event::Character('M')) {
+        if (plugin_idx_ >= 0 && plugin_idx_ < (int)displays_.size()) {
+            auto nav2 = std::dynamic_pointer_cast<Nav2Display>(displays_[plugin_idx_]);
+            if (nav2) { nav2->toggle_mode(); return true; }
         }
     }
 
