@@ -6,9 +6,14 @@
 #include <vector>
 
 #include "geometry_msgs/msg/pose_stamped.hpp"
+
+// Conditional include for Nav2 Actions (Not available in Foxy)
+#if __has_include(<nav2_msgs/action/navigate_through_poses.hpp>)
 #include "nav2_msgs/action/navigate_through_poses.hpp"
+#define HAS_NAV2_ACTIONS
+#endif
+
 #include "action_msgs/msg/goal_status_array.hpp"
-#include "actionlib_msgs/msg/goal_id.hpp"
 #include "rclcpp_action/rclcpp_action.hpp"
 #include "terminal_rviz/display.hpp"
 
@@ -16,8 +21,10 @@ namespace terminal_rviz {
 
 class Nav2Display : public Display {
 public:
+#ifdef HAS_NAV2_ACTIONS
     using NavThroughPoses = nav2_msgs::action::NavigateThroughPoses;
     using GoalHandleNav = rclcpp_action::ClientGoalHandle<NavThroughPoses>;
+#endif
 
     explicit Nav2Display(rclcpp::Node::SharedPtr node);
 
@@ -39,10 +46,11 @@ public:
     bool is_selecting() const { return is_selecting_; }
 
 private:
+#ifdef HAS_NAV2_ACTIONS
     void feedback_callback(GoalHandleNav::SharedPtr, const std::shared_ptr<const NavThroughPoses::Feedback> feedback);
     void result_callback(const GoalHandleNav::WrappedResult& result);
-
     rclcpp_action::Client<NavThroughPoses>::SharedPtr client_;
+#endif
     
     std::mutex mtx_;
     std::vector<geometry_msgs::msg::PoseStamped> waypoint_queue_;

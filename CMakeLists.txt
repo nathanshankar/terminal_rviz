@@ -21,7 +21,7 @@ find_package(urdfdom_headers REQUIRED)
 find_package(ament_index_cpp REQUIRED)
 find_package(assimp REQUIRED)
 find_package(std_msgs REQUIRED)
-find_package(nav2_msgs REQUIRED)
+find_package(nav2_msgs QUIET)
 find_package(action_msgs REQUIRED)
 find_package(actionlib_msgs REQUIRED)
 

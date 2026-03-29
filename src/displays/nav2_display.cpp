@@ -9,9 +9,14 @@ Nav2Display::Nav2Display(rclcpp::Node::SharedPtr node)
     : Display("Nav2", node) {}
 
 void Nav2Display::onInitialize() {
+#ifdef HAS_NAV2_ACTIONS
     client_ = rclcpp_action::create_client<NavThroughPoses>(node_, "navigate_through_poses");
+#else
+    nav_status_ = "Unsupported (Foxy/Kilted)";
+#endif
 }
 
+#ifdef HAS_NAV2_ACTIONS
 void Nav2Display::feedback_callback(GoalHandleNav::SharedPtr, const std::shared_ptr<const NavThroughPoses::Feedback> feedback) {
     std::lock_guard<std::mutex> lock(mtx_);
     dist_remaining_ = feedback->distance_remaining;
@@ -35,6 +40,7 @@ void Nav2Display::result_callback(const GoalHandleNav::WrappedResult& result) {
     poses_remaining_ = 0;
     dist_remaining_ = 0;
 }
+#endif
 
 void Nav2Display::set_goal(float x, float y, const std::string& frame) {
     std::lock_guard<std::mutex> lock(mtx_);
@@ -59,6 +65,7 @@ void Nav2Display::update_goal_orientation(float x, float y) {
 
 void Nav2Display::send_goal() {
     std::lock_guard<std::mutex> lock(mtx_);
+#ifdef HAS_NAV2_ACTIONS
     if (!waypoint_queue_.empty()) {
         if (!client_->wait_for_action_server(std::chrono::seconds(1))) {
             nav_status_ = "Err: No Server";
@@ -76,11 +83,16 @@ void Nav2Display::send_goal() {
         waypoint_queue_.clear();
         nav_status_ = "Sent";
     }
+#else
+    nav_status_ = "Actions Unavailable";
+#endif
 }
 
 void Nav2Display::cancel_nav() {
     std::lock_guard<std::mutex> lock(mtx_);
+#ifdef HAS_NAV2_ACTIONS
     client_->async_cancel_all_goals();
+#endif
     waypoint_queue_.clear();
     has_selecting_pose_ = false;
     nav_status_ = "Canceling...";
