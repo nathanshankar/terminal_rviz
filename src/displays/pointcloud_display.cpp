@@ -1,6 +1,10 @@
 #include "terminal_rviz/displays/pointcloud_display.hpp"
 #include <sensor_msgs/point_cloud2_iterator.hpp>
+#if __has_include(<tf2_geometry_msgs/tf2_geometry_msgs.hpp>)
 #include <tf2_geometry_msgs/tf2_geometry_msgs.hpp>
+#else
+#include <tf2_geometry_msgs/tf2_geometry_msgs.h>
+#endif
 #include <algorithm>
 
 namespace terminal_rviz {
