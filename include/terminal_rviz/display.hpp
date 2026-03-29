@@ -9,6 +9,7 @@
 #include "tf2_ros/buffer.h"
 #include "terminal_rviz/renderer.hpp"
 #include "ftxui/dom/elements.hpp"
+#include "ftxui/component/event.hpp"
 
 namespace terminal_rviz {
 
@@ -21,6 +22,7 @@ public:
     virtual void update(double dt) {}
     virtual void render(RvizRenderer& renderer, ftxui::Canvas& canvas, const std::string& fixed_frame, std::shared_ptr<tf2_ros::Buffer> tf_buffer) = 0;
     virtual ftxui::Element render_2d() { return ftxui::filler(); }
+    virtual bool handle_event(ftxui::Event) { return false; }
 
     void setEnabled(bool enabled) { enabled_ = enabled; }
     bool isEnabled() const { return enabled_; }

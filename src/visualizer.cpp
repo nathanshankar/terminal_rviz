@@ -7,6 +7,7 @@
 #include <set>
 #include <map>
 #include <algorithm>
+#include <sstream>
 #include "ftxui/dom/canvas.hpp"
 #include "ftxui/component/component.hpp"
 #include "ftxui/component/event.hpp"
@@ -26,43 +27,77 @@ void Visualizer::add_display(std::shared_ptr<Display> display) {
     displays_.push_back(display);
 }
 
+void Visualizer::cycle_tool() {
+    if (current_tool_ == Tool::Nav2) current_tool_ = Tool::Orbit;
+    else if (current_tool_ == Tool::Orbit) current_tool_ = Tool::Pan;
+    else current_tool_ = Tool::Nav2;
+}
+
+std::string Visualizer::get_tool_name() const {
+    if (current_tool_ == Tool::Nav2) return "NAV2 GOAL";
+    if (current_tool_ == Tool::Orbit) return "CAMERA ORBIT";
+    return "MAP PAN";
+}
+
 void Visualizer::run() {
     auto main_renderer = Renderer([this]() { return render_frame(); });
     
-    // Enable mouse events for picking
     auto component = CatchEvent(main_renderer, [this](Event event) { 
         if (event.is_mouse()) {
             auto mouse = event.mouse();
-            int click_x = mouse.x - 32;
-            int click_y = mouse.y - 2;
+            float dx = static_cast<float>(mouse.x - last_mouse_x_);
+            float dy = static_cast<float>(mouse.y - last_mouse_y_);
             
-            if (click_x >= 0 && click_y >= 0) {
-                if (plugin_idx_ >= 0 && plugin_idx_ < (int)displays_.size()) {
-                    auto nav2 = std::dynamic_pointer_cast<Nav2Display>(displays_[plugin_idx_]);
-                    if (nav2) {
-                        float wx, wy;
-                        bool hit = renderer_.pick_ground_plane(click_x * 2, click_y * 4, wx, wy);
-                        
-                        if (mouse.button == Mouse::Left) {
-                            if (mouse.motion == Mouse::Pressed && hit) {
+            // Tool Logic
+            bool is_pressed = (mouse.motion == Mouse::Pressed);
+            bool is_released = (mouse.motion == Mouse::Released);
+            
+            // Side panel is 30, top is 2
+            int vx = mouse.x - 32;
+            int vy = mouse.y - 2;
+
+            if (is_pressed || is_released) {
+                // Determine what action to take based on Tool or Button
+                if (mouse.button == Mouse::Right || (mouse.button == Mouse::Left && current_tool_ == Tool::Orbit)) {
+                    // ORBIT
+                    if (is_pressed && std::abs(dx) < 100) {
+                        tar_yaw_ = tar_yaw_.load() + dx * 0.015f;
+                        tar_pitch_ = tar_pitch_.load() - dy * 0.015f;
+                    }
+                } else if (mouse.button == Mouse::Middle || (mouse.button == Mouse::Left && current_tool_ == Tool::Pan)) {
+                    // PAN
+                    if (is_pressed && std::abs(dx) < 100) {
+                        float factor = tar_dist_.load() * 0.005f;
+                        float yaw = cur_yaw_;
+                        cam_x_ = cam_x_.load() - (dy * std::cos(yaw) + dx * std::sin(yaw)) * factor;
+                        cam_y_ = cam_y_.load() - (dy * std::sin(yaw) - dx * std::cos(yaw)) * factor;
+                    }
+                } else if (mouse.button == Mouse::Left && current_tool_ == Tool::Nav2) {
+                    // NAV2
+                    if (vx >= 0 && vy >= 0 && plugin_idx_ >= 0) {
+                        auto nav2 = std::dynamic_pointer_cast<Nav2Display>(displays_[plugin_idx_]);
+                        if (nav2) {
+                            float wx, wy;
+                            bool hit = renderer_.pick_ground_plane(vx * 2, vy * 4, wx, wy);
+                            if (is_pressed && hit) {
                                 if (!nav2->is_selecting()) {
                                     nav2->set_goal(wx, wy, fixed_frame_);
                                     nav2->start_selection();
-                                } else {
-                                    nav2->update_goal_orientation(wx, wy);
-                                }
-                                return true;
-                            } else if (mouse.motion == Mouse::Released) {
+                                } else nav2->update_goal_orientation(wx, wy);
+                            } else if (is_released) {
                                 if (hit) nav2->update_goal_orientation(wx, wy);
                                 nav2->finalize_selection();
-                                // Selection finished, but don't send yet.
-                                // User must press Space to confirm.
-                                return true;
                             }
                         }
                     }
                 }
             }
+
+            if (mouse.button == Mouse::WheelUp)   { zoom_ = zoom_.load() * 1.1f; return true; }
+            if (mouse.button == Mouse::WheelDown) { zoom_ = zoom_.load() / 1.1f; return true; }
+
+            last_mouse_x_ = mouse.x; last_mouse_y_ = mouse.y;
+            return true;
         }
         return handle_event(event); 
     });
@@ -72,7 +107,7 @@ void Visualizer::run() {
             discover_frames();
             discover_topics();
             screen_.PostEvent(Event::Custom);
-            std::this_thread::sleep_for(100ms);
+            std::this_thread::sleep_for(50ms);
         }
         screen_.Exit();
     });
@@ -91,11 +126,9 @@ void Visualizer::discover_frames() {
     if (!tf_buffer_) return;
     std::vector<std::string> frames;
     tf_buffer_->_getFrameStrings(frames);
-    
     if (frames.empty()) return;
     std::set<std::string> frame_set(frames.begin(), frames.end());
     std::vector<std::string> sorted_frames(frame_set.begin(), frame_set.end());
-    
     if (sorted_frames != available_frames_) {
         std::string current = available_frames_.empty() ? "" : available_frames_[frame_idx_];
         available_frames_ = sorted_frames;
@@ -110,11 +143,9 @@ void Visualizer::discover_topics() {
         available_topics_.clear();
         return;
     }
-
     auto display = displays_[plugin_idx_];
     std::string target_type = display->getMessageType();
     std::vector<std::string> new_topics;
-
     if (target_type == "TF") {
         auto tf_disp = std::dynamic_pointer_cast<TFDisplay>(display);
         if (tf_disp) new_topics = tf_disp->getDiscoveredFrames();
@@ -131,7 +162,6 @@ void Visualizer::discover_topics() {
         }
         std::sort(new_topics.begin(), new_topics.end());
     }
-
     if (new_topics != available_topics_) {
         std::string current = (available_topics_.empty() || topic_idx_ >= (int)available_topics_.size()) ? "" : available_topics_[topic_idx_];
         available_topics_ = new_topics;
@@ -154,7 +184,6 @@ Element Visualizer::render_frame() {
             }
         }
     }
-
     const int target_height = std::max(10, terminal.dimy - 8);
     const int target_width = std::max(10, terminal.dimx - left_panel_width - right_panel_width - 6);
     const int sw = target_width * 2, sh = target_height * 4;
@@ -177,43 +206,35 @@ Element Visualizer::render_frame() {
         auto t = text(" [" + std::to_string(key) + "] " + displays_[i]->getName() + (displays_[i]->isEnabled() ? " [X]" : " [ ]"));
         display_list.push_back(selected ? (t | inverted | color(Color::Yellow) | focus) : (t | color(Color::Green)));
     }
-
     Elements frame_list;
     for (size_t i = 0; i < available_frames_.size(); ++i) {
         bool is_selected = (static_cast<int>(i) == frame_idx_);
         auto t = text(available_frames_[i]);
         frame_list.push_back(is_selected ? (t | inverted | color(Color::Cyan) | focus) : t);
     }
-
     Elements topic_list;
     if (plugin_idx_ >= 0 && plugin_idx_ < (int)displays_.size()) {
         auto disp = displays_[plugin_idx_];
         std::string type = disp->getMessageType();
-        if (type == "None") topic_list.push_back(text("No settings for this plugin") | dim);
+        if (type == "None") topic_list.push_back(text("No settings") | dim);
         else {
-            std::string label = (type == "TF") ? "Frames [T/Y to cycle]:" : ("Type: " + type);
+            std::string label = (type == "TF") ? "Frames [T/Y]:" : ("Type: " + type);
             topic_list.push_back(text(label) | dim | size(WIDTH, LESS_THAN, 25));
             topic_list.push_back(separator());
-            if (available_topics_.empty()) topic_list.push_back(text("Searching...") | dim | color(Color::Red));
-            else {
-                for (size_t i = 0; i < available_topics_.size(); ++i) {
-                    bool is_selected = (static_cast<int>(i) == topic_idx_);
-                    auto name = available_topics_[i];
-                    if (type == "TF") {
-                        auto tf_disp = std::dynamic_pointer_cast<TFDisplay>(disp);
-                        bool enabled = tf_disp && tf_disp->isFrameEnabled(name);
-                        auto t = text((enabled ? "[X] " : "[ ] ") + name);
-                        topic_list.push_back(is_selected ? (t | inverted | color(Color::Magenta) | focus) : t);
-                    } else if (type == "sensor_msgs/msg/Image") {
-                        auto img_disp = std::dynamic_pointer_cast<ImageDisplay>(disp);
-                        bool enabled = img_disp && img_disp->isTopicEnabled(name);
-                        auto t = text((enabled ? "[X] " : "[ ] ") + name);
-                        topic_list.push_back(is_selected ? (t | inverted | color(Color::Magenta) | focus) : t);
-                    } else {
-                        auto t = text(name);
-                        topic_list.push_back(is_selected ? (t | inverted | color(Color::Magenta) | focus) : t);
-                    }
-                }
+            for (size_t i = 0; i < available_topics_.size(); ++i) {
+                bool is_selected = (static_cast<int>(i) == topic_idx_);
+                auto name = available_topics_[i];
+                if (type == "TF") {
+                    auto tf_disp = std::dynamic_pointer_cast<TFDisplay>(disp);
+                    bool enabled = tf_disp && tf_disp->isFrameEnabled(name);
+                    auto t = text((enabled ? "[X] " : "[ ] ") + name);
+                    topic_list.push_back(is_selected ? (t | inverted | color(Color::Magenta) | focus) : t);
+                } else if (type == "sensor_msgs/msg/Image") {
+                    auto img_disp = std::dynamic_pointer_cast<ImageDisplay>(disp);
+                    bool enabled = img_disp && img_disp->isTopicEnabled(name);
+                    auto t = text((enabled ? "[X] " : "[ ] ") + name);
+                    topic_list.push_back(is_selected ? (t | inverted | color(Color::Magenta) | focus) : t);
+                } else topic_list.push_back(is_selected ? (text(name) | inverted | color(Color::Magenta) | focus) : text(name));
             }
         }
     } else topic_list.push_back(text("Select a plugin (Tab)") | dim);
@@ -224,11 +245,13 @@ Element Visualizer::render_frame() {
             separator(),
             text(" Frame: " + fixed_frame_) | color(Color::Cyan),
             filler(),
-            text(" [Arrows/PgUp/PgDn] Cam | [G] Grid | [1-0] Toggle | [Tab] Select | [T/Y] Up/Down | [F/Space] Frame/Set | [Q] Quit ") | dim
+            text(" [V] Tool | [Drag] Tool Action | [G] Grid | [1-0] Toggle | [Tab] Select | [Q] Quit ") | dim
         }),
         separator(),
         hbox({
             vbox({
+                text(" ACTIVE TOOL [V] ") | bold | color(Color::Yellow),
+                text(" > " + get_tool_name()) | color(Color::White) | border | hcenter,
                 text(" PLUGINS ") | bold | color(Color::Yellow),
                 vbox(std::move(display_list)) | border,
                 text(" FIXED FRAME [F] ") | bold | color(Color::Yellow),
@@ -247,6 +270,9 @@ Element Visualizer::render_frame() {
 
 bool Visualizer::handle_event(Event event) {
     if (event == Event::Character('q') || event == Event::Escape) { quit_flag_ = true; screen_.Exit(); return true; }
+    if (plugin_idx_ >= 0 && plugin_idx_ < (int)displays_.size()) {
+        if (displays_[plugin_idx_]->handle_event(event)) return true;
+    }
     if (event == Event::ArrowUp)    { cam_z_ = cam_z_.load() + 0.5f; return true; }
     if (event == Event::ArrowDown)  { cam_z_ = cam_z_.load() - 0.5f; return true; }
     if (event == Event::ArrowLeft)  { cam_y_ = cam_y_.load() + 0.5f; return true; }
@@ -260,75 +286,35 @@ bool Visualizer::handle_event(Event event) {
     if (event == Event::Character('+') || event == Event::Character('=')) { zoom_ = zoom_.load() * 1.1f; return true; }
     if (event == Event::Character('-') || event == Event::Character('_')) { zoom_ = zoom_.load() / 1.1f; return true; }
     if (event == Event::Character('g') || event == Event::Character('G')) { if (grid_display_) grid_display_->toggle(); return true; }
-
-    if (event == Event::Tab) {
-        plugin_idx_++;
-        if (plugin_idx_ >= (int)displays_.size()) plugin_idx_ = 0;
-        discover_topics();
-        return true;
-    }
-
+    if (event == Event::Character('v') || event == Event::Character('V')) { cycle_tool(); return true; }
+    if (event == Event::Tab) { plugin_idx_ = (plugin_idx_ + 1) % (int)displays_.size(); discover_topics(); return true; }
     if (event == Event::Character('f') || event == Event::Character('F')) {
-        if (!available_frames_.empty()) {
-            frame_idx_ = (frame_idx_ + 1) % available_frames_.size();
-            fixed_frame_ = available_frames_[frame_idx_];
-        }
+        if (!available_frames_.empty()) { frame_idx_ = (frame_idx_ + 1) % available_frames_.size(); fixed_frame_ = available_frames_[frame_idx_]; }
         return true;
     }
-
     if (event == Event::Character('t') || event == Event::Character('T')) {
-        if (!available_topics_.empty()) {
-            topic_idx_ = (topic_idx_ - 1 + available_topics_.size()) % available_topics_.size();
-        }
+        if (!available_topics_.empty()) topic_idx_ = (topic_idx_ - 1 + available_topics_.size()) % available_topics_.size();
         return true;
     }
-
     if (event == Event::Character('y') || event == Event::Character('Y')) {
-        if (!available_topics_.empty()) {
-            topic_idx_ = (topic_idx_ + 1) % available_topics_.size();
-        }
+        if (!available_topics_.empty()) topic_idx_ = (topic_idx_ + 1) % available_topics_.size();
         return true;
     }
-
     if (event == Event::Character(' ') || event == Event::Return) {
         if (plugin_idx_ >= 0 && plugin_idx_ < (int)displays_.size()) {
             auto disp = displays_[plugin_idx_];
             if (disp->getMessageType() == "TF" && !available_topics_.empty()) {
                 auto tf_disp = std::dynamic_pointer_cast<TFDisplay>(disp);
                 if (tf_disp) { tf_disp->toggleFrame(available_topics_[topic_idx_]); return true; }
-            } else if (disp->getMessageType() == "Nav2") {
-                auto nav2 = std::dynamic_pointer_cast<Nav2Display>(disp);
-                if (nav2) { nav2->send_goal(); return true; }
-            } else if (!available_topics_.empty()) {
-                disp->setTopic(available_topics_[topic_idx_]);
-                return true;
+            } else if (!available_topics_.empty() && disp->getMessageType() != "Nav2") { 
+                disp->setTopic(available_topics_[topic_idx_]); 
+                return true; 
             }
         }
     }
-
-    if (event == Event::Character('r') || event == Event::Character('R')) {
-        if (plugin_idx_ >= 0 && plugin_idx_ < (int)displays_.size()) {
-            auto nav2 = std::dynamic_pointer_cast<Nav2Display>(displays_[plugin_idx_]);
-            if (nav2) { nav2->cancel_nav(); return true; }
-        }
-    }
-
-    if (event == Event::Character('m') || event == Event::Character('M')) {
-        if (plugin_idx_ >= 0 && plugin_idx_ < (int)displays_.size()) {
-            auto nav2 = std::dynamic_pointer_cast<Nav2Display>(displays_[plugin_idx_]);
-            if (nav2) { nav2->toggle_mode(); return true; }
-        }
-    }
-
     if (event.is_character() && event.character()[0] >= '0' && event.character()[0] <= '9') {
-        int key_val = event.character()[0] - '0';
-        int idx = (key_val == 0) ? 9 : (key_val - 1);
-        if (idx >= 0 && idx < (int)displays_.size()) {
-            displays_[idx]->toggle();
-            plugin_idx_ = idx;
-            discover_topics();
-            return true;
-        }
+        int key_val = event.character()[0] - '0'; int idx = (key_val == 0) ? 9 : (key_val - 1);
+        if (idx >= 0 && idx < (int)displays_.size()) { displays_[idx]->toggle(); plugin_idx_ = idx; discover_topics(); return true; }
     }
     return false;
 }

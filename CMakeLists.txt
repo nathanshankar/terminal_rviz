@@ -8,6 +8,7 @@ endif()
 # Find dependencies
 find_package(ament_cmake REQUIRED)
 find_package(rclcpp REQUIRED)
+find_package(rclcpp_action REQUIRED)
 find_package(sensor_msgs REQUIRED)
 find_package(visualization_msgs REQUIRED)
 find_package(geometry_msgs REQUIRED)
@@ -58,6 +59,7 @@ target_compile_features(${PROJECT_NAME}_core PUBLIC cxx_std_17)
 
 ament_target_dependencies(${PROJECT_NAME}_core
   rclcpp
+  rclcpp_action
   sensor_msgs
   visualization_msgs
   geometry_msgs

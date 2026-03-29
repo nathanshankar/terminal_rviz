@@ -32,6 +32,10 @@ public:
     
     void set_status(const std::string& msg) { status_msg_ = msg; }
 
+    enum class Tool { Nav2, Orbit, Pan };
+    void cycle_tool();
+    std::string get_tool_name() const;
+
 private:
     void discover_frames();
     void discover_topics();
@@ -54,6 +58,10 @@ private:
     std::vector<std::string> available_topics_;
     int topic_idx_ = 0;
     std::string status_msg_ = "Ready";
+    Tool current_tool_ = Tool::Nav2;
+
+    int last_mouse_x_ = 0;
+    int last_mouse_y_ = 0;
 
     ftxui::ScreenInteractive screen_;
     std::atomic<bool> quit_flag_{false};

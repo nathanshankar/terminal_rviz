@@ -9,100 +9,125 @@ Nav2Display::Nav2Display(rclcpp::Node::SharedPtr node)
     : Display("Nav2", node) {}
 
 void Nav2Display::onInitialize() {
-    goal_pub_ = node_->create_publisher<geometry_msgs::msg::PoseStamped>("goal_pose", 10);
-    cancel_pub_ = node_->create_publisher<actionlib_msgs::msg::GoalID>("navigate_to_pose/_action/cancel_goal", 10);
-    status_sub_ = node_->create_subscription<action_msgs::msg::GoalStatusArray>(
-        "navigate_to_pose/_action/status", 10, std::bind(&Nav2Display::status_callback, this, std::placeholders::_1));
-    feedback_sub_ = node_->create_subscription<nav2_msgs::action::NavigateToPose_FeedbackMessage>(
-        "navigate_to_pose/_action/feedback", 10, std::bind(&Nav2Display::feedback_callback, this, std::placeholders::_1));
+    client_ = rclcpp_action::create_client<NavThroughPoses>(node_, "navigate_through_poses");
 }
 
-void Nav2Display::status_callback(const action_msgs::msg::GoalStatusArray::SharedPtr msg) {
+void Nav2Display::feedback_callback(GoalHandleNav::SharedPtr, const std::shared_ptr<const NavThroughPoses::Feedback> feedback) {
     std::lock_guard<std::mutex> lock(mtx_);
-    if (msg->status_list.empty()) nav_status_ = "Idle";
-    else {
-        auto last = msg->status_list.back();
-        switch (last.status) {
-            case 1: nav_status_ = "Accepted"; break;
-            case 2: nav_status_ = "Executing"; break;
-            case 4: nav_status_ = "Succeeded"; break;
-            case 5: nav_status_ = "Canceled"; break;
-            case 6: nav_status_ = "Aborted"; break;
-            default: nav_status_ = "Unknown"; break;
-        }
-    }
-}
-
-void Nav2Display::feedback_callback(const std::shared_ptr<nav2_msgs::action::NavigateToPose_FeedbackMessage> msg) {
-    std::lock_guard<std::mutex> lock(mtx_);
-    dist_remaining_ = msg->feedback.distance_remaining;
-    recoveries_ = msg->feedback.number_of_recoveries;
-    int secs = msg->feedback.estimated_time_remaining.sec;
+    dist_remaining_ = feedback->distance_remaining;
+    recoveries_ = feedback->number_of_recoveries;
+    poses_remaining_ = feedback->number_of_poses_remaining;
+    
+    int secs = feedback->estimated_time_remaining.sec;
     std::stringstream ss; ss << secs / 60 << "m " << secs % 60 << "s";
     time_remaining_ = ss.str();
+    nav_status_ = "Executing";
+}
+
+void Nav2Display::result_callback(const GoalHandleNav::WrappedResult& result) {
+    std::lock_guard<std::mutex> lock(mtx_);
+    switch (result.code) {
+        case rclcpp_action::ResultCode::SUCCEEDED: nav_status_ = "Succeeded"; break;
+        case rclcpp_action::ResultCode::ABORTED:   nav_status_ = "Aborted"; break;
+        case rclcpp_action::ResultCode::CANCELED:  nav_status_ = "Canceled"; break;
+        default: nav_status_ = "Idle"; break;
+    }
+    poses_remaining_ = 0;
+    dist_remaining_ = 0;
 }
 
 void Nav2Display::set_goal(float x, float y, const std::string& frame) {
     std::lock_guard<std::mutex> lock(mtx_);
-    pending_goal_.header.frame_id = frame;
-    pending_goal_.header.stamp = rclcpp::Time(0, 0, RCL_ROS_TIME);
-    pending_goal_.pose.position.x = x;
-    pending_goal_.pose.position.y = y;
-    pending_goal_.pose.position.z = 0.0;
-    goal_yaw_ = 0.0f;
-    has_pending_goal_ = true;
+    current_selecting_pose_.header.frame_id = frame;
+    current_selecting_pose_.header.stamp = rclcpp::Time(0, 0, RCL_ROS_TIME);
+    current_selecting_pose_.pose.position.x = x;
+    current_selecting_pose_.pose.position.y = y;
+    current_selecting_pose_.pose.position.z = 0.0;
+    current_selecting_pose_.pose.orientation.w = 1.0;
+    has_selecting_pose_ = true;
 }
 
 void Nav2Display::update_goal_orientation(float x, float y) {
     std::lock_guard<std::mutex> lock(mtx_);
-    if (!has_pending_goal_) return;
-    float dx = x - pending_goal_.pose.position.x;
-    float dy = y - pending_goal_.pose.position.y;
-    goal_yaw_ = std::atan2(dy, dx);
+    if (!has_selecting_pose_) return;
+    float dx = x - current_selecting_pose_.pose.position.x;
+    float dy = y - current_selecting_pose_.pose.position.y;
+    float yaw = std::atan2(dy, dx);
+    current_selecting_pose_.pose.orientation.z = std::sin(yaw / 2.0f);
+    current_selecting_pose_.pose.orientation.w = std::cos(yaw / 2.0f);
 }
 
 void Nav2Display::send_goal() {
     std::lock_guard<std::mutex> lock(mtx_);
-    if (has_pending_goal_) {
-        pending_goal_.pose.orientation.z = std::sin(goal_yaw_ / 2.0f);
-        pending_goal_.pose.orientation.w = std::cos(goal_yaw_ / 2.0f);
-        goal_pub_->publish(pending_goal_);
-        has_pending_goal_ = false;
+    if (!waypoint_queue_.empty()) {
+        if (!client_->wait_for_action_server(std::chrono::seconds(1))) {
+            nav_status_ = "Err: No Server";
+            return;
+        }
+
+        auto goal_msg = NavThroughPoses::Goal();
+        goal_msg.poses = waypoint_queue_;
+
+        auto send_goal_options = rclcpp_action::Client<NavThroughPoses>::SendGoalOptions();
+        send_goal_options.feedback_callback = std::bind(&Nav2Display::feedback_callback, this, std::placeholders::_1, std::placeholders::_2);
+        send_goal_options.result_callback = std::bind(&Nav2Display::result_callback, this, std::placeholders::_1);
+        
+        client_->async_send_goal(goal_msg, send_goal_options);
+        waypoint_queue_.clear();
+        nav_status_ = "Sent";
     }
 }
 
 void Nav2Display::cancel_nav() {
     std::lock_guard<std::mutex> lock(mtx_);
-    actionlib_msgs::msg::GoalID msg; 
-    cancel_pub_->publish(msg);
-    has_pending_goal_ = false;
+    client_->async_cancel_all_goals();
+    waypoint_queue_.clear();
+    has_selecting_pose_ = false;
+    nav_status_ = "Canceling...";
 }
 
-void Nav2Display::toggle_mode() {
+void Nav2Display::remove_last() {
     std::lock_guard<std::mutex> lock(mtx_);
-    waypoint_mode_ = !waypoint_mode_;
+    if (!waypoint_queue_.empty()) waypoint_queue_.pop_back();
+    else has_selecting_pose_ = false;
+}
+
+bool Nav2Display::handle_event(ftxui::Event event) {
+    if (event == ftxui::Event::Character('r') || event == ftxui::Event::Character('R')) { cancel_nav(); return true; }
+    if (event == ftxui::Event::Character(' ') || event == ftxui::Event::Return) { send_goal(); return true; }
+    if (event == ftxui::Event::Special("\x7F") || event == ftxui::Event::Backspace) { 
+        remove_last(); return true; 
+    }
+    return false;
 }
 
 void Nav2Display::render(RvizRenderer& renderer, ftxui::Canvas& canvas, const std::string& fixed_frame, std::shared_ptr<tf2_ros::Buffer> tf_buffer) {
     if (!enabled_) return;
     std::lock_guard<std::mutex> lock(mtx_);
-    if (has_pending_goal_) {
-        float gx = pending_goal_.pose.position.x, gy = pending_goal_.pose.position.y, gz = 0.1f;
-        ftxui::Color col = is_selecting_ ? ftxui::Color::Green : ftxui::Color::Yellow;
-        
-        // Draw the Arrow
-        float arrow_len = 1.0f;
-        float ex = gx + arrow_len * std::cos(goal_yaw_);
-        float ey = gy + arrow_len * std::sin(goal_yaw_);
+
+    auto draw_arrow = [&](const geometry_msgs::msg::Pose& pose, ftxui::Color col) {
+        float gx = pose.position.x, gy = pose.position.y, gz = 0.5f;
+        double qz = pose.orientation.z, qw = pose.orientation.w;
+        double yaw = 2.0 * std::atan2(qz, qw);
+        float arrow_len = 0.8f;
+        float ex = gx + arrow_len * std::cos(yaw), ey = gy + arrow_len * std::sin(yaw);
         renderer.draw_line(gx, gy, gz, ex, ey, gz, col);
-        
-        // Arrow head
-        float head_angle = 0.4f; float head_len = 0.3f;
-        renderer.draw_line(ex, ey, gz, ex - head_len * std::cos(goal_yaw_ - head_angle), ey - head_len * std::sin(goal_yaw_ - head_angle), gz, col);
-        renderer.draw_line(ex, ey, gz, ex - head_len * std::cos(goal_yaw_ + head_angle), ey - head_len * std::sin(goal_yaw_ + head_angle), gz, col);
-        
-        // Vertical line for visibility
-        renderer.draw_line(gx, gy, 0, gx, gy, 0.5f, col);
+        float ha = 0.4f, hl = 0.25f;
+        renderer.draw_line(ex, ey, gz, ex - hl * std::cos(yaw - ha), ey - hl * std::sin(yaw - ha), gz, col);
+        renderer.draw_line(ex, ey, gz, ex - hl * std::cos(yaw + ha), ey - hl * std::sin(yaw + ha), gz, col);
+        renderer.draw_line(gx, gy, 0, gx, gy, gz, col);
+    };
+
+    for (const auto& p : waypoint_queue_) draw_arrow(p.pose, ftxui::Color::Yellow);
+    if (has_selecting_pose_) draw_arrow(current_selecting_pose_.pose, is_selecting_ ? ftxui::Color::Green : ftxui::Color::White);
+}
+
+void Nav2Display::finalize_selection() {
+    std::lock_guard<std::mutex> lock(mtx_);
+    is_selecting_ = false;
+    if (has_selecting_pose_) {
+        waypoint_queue_.push_back(current_selecting_pose_);
+        has_selecting_pose_ = false;
     }
 }
 
@@ -113,16 +138,19 @@ ftxui::Element Nav2Display::render_2d() {
     return vbox({
         text(" Nav2 Dashboard ") | bold | color(Color::Yellow),
         separator(),
-        hbox({ text("Status: "), text(nav_status_) | color(nav_status_ == "Executing" ? Color::Green : Color::White) }),
-        hbox({ text("Mode:   "), text(waypoint_mode_ ? "Waypoints" : "Navigation") }),
+        hbox({ text("Status:     "), text(nav_status_) | color(Color::Green) }),
+        hbox({ text("Queue Size: "), text(std::to_string(waypoint_queue_.size())) | bold | color(Color::Cyan) }),
+        hbox({ text("Poses Left: "), text(std::to_string(poses_remaining_)) | color(Color::White) }),
         separator(),
-        hbox({ text("Dist:   "), text(std::to_string(dist_remaining_).substr(0,4) + "m") }),
-        hbox({ text("ETA:    "), text(time_remaining_) }),
+        hbox({ text("Dist Rem:   "), text(std::to_string(dist_remaining_).substr(0,4) + " m") }),
+        hbox({ text("ETA:        "), text(time_remaining_) }),
+        hbox({ text("Recoveries: "), text(std::to_string(recoveries_)) | color(Color::Red) }),
         separator(),
         vbox({
-            text(" [Click+Drag] Map to set Pose"),
-            text(" [Space]      Confirm & Send"),
-            text(" [R]          Cancel | [M] Mode")
+            text(" [Click+Drag] Add Waypoint"),
+            text(" [Backspace]  Remove Last"),
+            text(" [Space]      Send Queue"),
+            text(" [R]          Cancel Nav")
         }) | dim
     }) | border;
 }
