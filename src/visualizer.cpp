@@ -191,6 +191,7 @@ Element Visualizer::render_frame() {
     const int sw = target_width * 2, sh = target_height * 4;
     
     auto c = Canvas(sw, sh);
+    bool show_any_modal = show_plugin_modal_ || show_frame_modal_;
     
     // --- Smooth Animation ---
     const float alpha = 0.2f;
@@ -205,11 +206,13 @@ Element Visualizer::render_frame() {
     renderer_.set_size(sw, sh);
     renderer_.set_camera(cur_yaw_, cur_pitch_, 0.0f, cur_dist_, cur_cam_x_, cur_cam_y_, cur_cam_z_);
     renderer_.set_zoom(cur_zoom_);
-    renderer_.clear();
     
-    if (grid_display_) grid_display_->render(renderer_, c, fixed_frame_, tf_buffer_);
-    for (auto& display : displays_) display->render(renderer_, c, fixed_frame_, tf_buffer_);
-    renderer_.finish(c);
+    if (!show_any_modal) {
+        renderer_.clear();
+        if (grid_display_) grid_display_->render(renderer_, c, fixed_frame_, tf_buffer_);
+        for (auto& display : displays_) display->render(renderer_, c, fixed_frame_, tf_buffer_);
+        renderer_.finish(c);
+    }
 
     // Update dynamic offsets for mouse picking
     canvas_x_offset_ = left_width + 2;
@@ -271,17 +274,26 @@ Element Visualizer::render_frame() {
         separator(),
         hbox({
             vbox({
-                text(" FIXED FRAME [F] ") | bold | color(Color::Yellow),
-                vbox({ text(" > " + fixed_frame_) | color(Color::Cyan) }) | border,
-                text(" ACTIVE TOOL [V] ") | bold | color(Color::Yellow),
-                text(" > " + get_tool_name()) | color(Color::White) | border | hcenter,
-                text(" PLUGINS [P] ") | bold | color(Color::Yellow),
-                vbox(std::move(display_list)) | border,
-                text(" TOPICS/FRAMES [T/Y] ") | bold | color(Color::Yellow),
-                vbox(std::move(topic_list)) | border | vscroll_indicator | frame | size(HEIGHT, EQUAL, 10),
-                filler(),
-                text(" STATUS: ") | bold,
-                text(status_msg_) | color(Color::Green) | size(HEIGHT, EQUAL, 2),
+                vbox({
+                    text(" FIXED FRAME [F] ") | bold | color(Color::Yellow),
+                    text(" " + fixed_frame_) | color(Color::Cyan) | border,
+                }) | border,
+                vbox({
+                    text(" ACTIVE TOOL [V] ") | bold | color(Color::Yellow),
+                    text(" " + get_tool_name()) | color(Color::White) | border | hcenter,
+                }) | border,
+                vbox({
+                    text(" PLUGINS [P] ") | bold | color(Color::Yellow),
+                    vbox(std::move(display_list)) | border | size(HEIGHT, EQUAL, 8),
+                }) | border,
+                vbox({
+                    text(" TOPICS/FRAMES [T/Y] ") | bold | color(Color::Yellow),
+                    vbox(std::move(topic_list)) | border | vscroll_indicator | frame | flex,
+                }) | border | flex,
+                vbox({
+                    text(" STATUS: ") | bold,
+                    text(status_msg_) | color(Color::Green),
+                }) | border | size(HEIGHT, EQUAL, 4),
             }) | size(WIDTH, EQUAL, left_width),
             canvas(std::move(c)) | center | flex | border,
             vbox({ image_panel | flex, nav2_active ? nav2_panel : filler(), }) | size(WIDTH, EQUAL, right_width),
@@ -289,10 +301,8 @@ Element Visualizer::render_frame() {
     });
 
     Element modal_box = filler();
-    bool show_any_modal = false;
 
     if (show_plugin_modal_) {
-        show_any_modal = true;
         Elements modal_items;
         for (size_t i = 0; i < displays_.size(); ++i) {
             bool selected = (static_cast<int>(i) == modal_selected_idx_);
@@ -342,7 +352,7 @@ Element Visualizer::render_frame() {
     if (!show_any_modal) return ftxui::dbox({ main_layout | border });
 
     return ftxui::dbox({
-        main_layout | border,
+        main_layout | border | dim,
         modal_box
     });
 }
@@ -353,6 +363,9 @@ bool Visualizer::handle_event(Event event) {
     if (show_frame_modal_) {
         if (event.is_mouse()) {
             auto mouse = event.mouse();
+            if (mouse.button == Mouse::WheelUp) { modal_frame_selected_idx_ = std::max(0, modal_frame_selected_idx_ - 1); screen_.PostEvent(Event::Custom); return true; }
+            if (mouse.button == Mouse::WheelDown) { modal_frame_selected_idx_ = std::min((int)available_frames_.size() + 1, modal_frame_selected_idx_ + 1); screen_.PostEvent(Event::Custom); return true; }
+            
             auto terminal = ftxui::Terminal::Size();
             int modal_width = 44; 
             int frame_count = (int)available_frames_.size();
@@ -404,21 +417,12 @@ bool Visualizer::handle_event(Event event) {
         return true; 
     }
 
-    if (event == Event::Character('p') || event == Event::Character('P')) {
-        show_plugin_modal_ = !show_plugin_modal_;
-        if (show_plugin_modal_) {
-            modal_selected_idx_ = 0;
-            for (size_t i = 0; i < displays_.size(); ++i) {
-                if (i < 64) modal_plugin_states_[i] = displays_[i]->isEnabled();
-            }
-        }
-        screen_.PostEvent(Event::Custom);
-        return true;
-    }
-
     if (show_plugin_modal_) {
         if (event.is_mouse()) {
             auto mouse = event.mouse();
+            if (mouse.button == Mouse::WheelUp) { modal_selected_idx_ = std::max(0, modal_selected_idx_ - 1); screen_.PostEvent(Event::Custom); return true; }
+            if (mouse.button == Mouse::WheelDown) { modal_selected_idx_ = std::min((int)displays_.size() + 1, modal_selected_idx_ + 1); screen_.PostEvent(Event::Custom); return true; }
+
             auto terminal = ftxui::Terminal::Size();
             int modal_width = 44; 
             int display_count = (int)displays_.size();
@@ -467,7 +471,7 @@ bool Visualizer::handle_event(Event event) {
                     if (i < 64) displays_[i]->setEnabled(modal_plugin_states_[i]);
                 }
                 show_plugin_modal_ = false;
-                if (plugin_idx_ < 0 || !displays_[plugin_idx_]->isEnabled()) {
+                if (plugin_idx_ < 0 || (plugin_idx_ < (int)displays_.size() && !displays_[plugin_idx_]->isEnabled())) {
                     plugin_idx_ = -1;
                     for (size_t i = 0; i < (int)displays_.size(); ++i) if (displays_[i]->isEnabled()) { plugin_idx_ = (int)i; break; }
                 }
@@ -480,90 +484,102 @@ bool Visualizer::handle_event(Event event) {
             screen_.PostEvent(Event::Custom);
             return true;
         }
-        return true; // Consume other events when modal is open
-    }
-
-    // 1. Check Global Confirmation (Enter)
-    if (event == Event::Return) {
-        for (auto& d : displays_) if (d->getName() == "Nav2" && d->isEnabled()) { if (d->handle_event(event)) return true; }
+        return true; 
     }
 
     if (event.is_mouse()) {
         auto mouse = event.mouse();
         if (mouse.button == Mouse::Left && mouse.motion == Mouse::Pressed) {
-            // Sidebar Click Handling
+            // Sidebar Click Handling (approx 30 chars wide)
             if (mouse.x < 30) { 
-                int y_cursor = 2; // Outer border + top bar separator
+                int y_cursor = 3; // Start after top bar + separator + border
 
-                // Fixed Frame Section (Moved to top)
-                y_cursor += 1; // Header
-                if (mouse.y >= y_cursor && mouse.y < y_cursor + 3) {
+                // 1. Fixed Frame Section (6 lines: border + header + border-box)
+                if (mouse.y >= y_cursor && mouse.y < y_cursor + 6) {
                     show_frame_modal_ = true;
                     modal_frame_selected_idx_ = frame_idx_;
                     screen_.PostEvent(Event::Custom);
                     return true;
                 }
-                y_cursor += 3;
+                y_cursor += 6;
 
-                // Tool Section
-                y_cursor += 1; // Tool Header
-                if (mouse.y >= y_cursor && mouse.y < y_cursor + 3) {
+                // 2. Tool Section (6 lines)
+                if (mouse.y >= y_cursor && mouse.y < y_cursor + 6) {
                     cycle_tool();
                     screen_.PostEvent(Event::Custom);
                     return true;
                 }
-                y_cursor += 3;
+                y_cursor += 6;
 
-                // Plugins Section
-                y_cursor += 1; // Header
-                int enabled_count = 0;
-                for (auto& d : displays_) if (d->isEnabled()) enabled_count++;
-                int plugin_list_height = std::max(1, enabled_count);
-                if (mouse.y >= y_cursor && mouse.y < y_cursor + plugin_list_height + 2) {
-                    int sidebar_y = mouse.y - (y_cursor + 1);
-                    if (sidebar_y >= 0) {
+                // 3. Plugins Section (border + header + inner-box (8 lines) + border) = 13 lines?
+                // Header(1) + OuterBorder(2) + InnerBox(8) + InnerBorder(2) = 13
+                int plugin_box_height = 13;
+                if (mouse.y >= y_cursor && mouse.y < y_cursor + plugin_box_height) {
+                    // Check if clicked header
+                    if (mouse.y == y_cursor + 1) {
+                        show_plugin_modal_ = true;
+                        modal_selected_idx_ = 0;
+                        for (size_t i = 0; i < displays_.size(); ++i) if (i < 64) modal_plugin_states_[i] = displays_[i]->isEnabled();
+                        screen_.PostEvent(Event::Custom);
+                        return true;
+                    }
+                    // Check if clicked in list
+                    int list_y = mouse.y - (y_cursor + 3); // outer border + header + inner border
+                    if (list_y >= 0 && list_y < 8) {
                         int count = 0;
                         for (size_t i = 0; i < (int)displays_.size(); ++i) {
                             if (displays_[i]->isEnabled()) {
-                                if (count == sidebar_y) {
-                                    plugin_idx_ = (int)i;
-                                    discover_topics();
-                                    screen_.PostEvent(Event::Custom);
-                                    return true;
-                                }
+                                if (count == list_y) { plugin_idx_ = (int)i; discover_topics(); screen_.PostEvent(Event::Custom); return true; }
                                 count++;
                             }
                         }
                     }
+                    return true;
                 }
-                y_cursor += plugin_list_height + 2;
+                y_cursor += plugin_box_height;
 
-                // Topics Section
-                y_cursor += 1; // Header
-                int topic_list_height = 10;
-                if (mouse.y >= y_cursor && mouse.y < y_cursor + topic_list_height + 2) {
-                    int relative_y = mouse.y - (y_cursor + 1); // Only 1 line for header, box starts immediately
-                    if (relative_y >= 0 && relative_y < topic_list_height + 2) {
-                        int item_y = relative_y - 1; // Account for top border of the frame
-                        if (item_y >= 0 && item_y < (int)available_topics_.size()) {
-                            topic_idx_ = item_y;
-                            if (plugin_idx_ >= 0) {
-                                auto disp = displays_[plugin_idx_];
-                                std::string type = disp->getMessageType();
-                                if (type == "TF") {
-                                    auto tf_disp = std::dynamic_pointer_cast<TFDisplay>(disp);
-                                    if (tf_disp) tf_disp->toggleFrame(available_topics_[topic_idx_]);
-                                } else if (type != "sensor_msgs/msg/Image" && type != "None") {
-                                    disp->setTopic(available_topics_[topic_idx_]);
-                                }
+                // 4. Topics Section (remainder)
+                if (mouse.y >= y_cursor) {
+                    int list_y = mouse.y - (y_cursor + 3); // outer border + header + inner border
+                    if (list_y >= 0 && list_y < (int)available_topics_.size()) {
+                        topic_idx_ = list_y;
+                        if (plugin_idx_ >= 0) {
+                            auto disp = displays_[plugin_idx_];
+                            std::string type = disp->getMessageType();
+                            if (type == "TF") {
+                                auto tf_disp = std::dynamic_pointer_cast<TFDisplay>(disp);
+                                if (tf_disp) tf_disp->toggleFrame(available_topics_[topic_idx_]);
+                            } else if (type != "sensor_msgs/msg/Image" && type != "None") {
+                                disp->setTopic(available_topics_[topic_idx_]);
                             }
-                            screen_.PostEvent(Event::Custom);
-                            return true;
                         }
+                        screen_.PostEvent(Event::Custom);
+                        return true;
                     }
                 }
             }
         }
+    }
+
+    if (event == Event::Character('p') || event == Event::Character('P')) {
+        show_plugin_modal_ = !show_plugin_modal_;
+        if (show_plugin_modal_) {
+            modal_selected_idx_ = 0;
+            for (size_t i = 0; i < displays_.size(); ++i) {
+                if (i < 64) modal_plugin_states_[i] = displays_[i]->isEnabled();
+            }
+        }
+        screen_.PostEvent(Event::Custom);
+        return true;
+    }
+
+    if (event == Event::Character('f') || event == Event::Character('F')) {
+        show_frame_modal_ = !show_frame_modal_;
+        if (show_frame_modal_) {
+            modal_frame_selected_idx_ = frame_idx_;
+        }
+        screen_.PostEvent(Event::Custom);
+        return true;
     }
 
     // 2. Try global Nav2 shortcuts (C, Backspace) if enabled
