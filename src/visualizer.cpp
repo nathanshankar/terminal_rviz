@@ -50,29 +50,32 @@ void Visualizer::run() {
     auto main_renderer = Renderer([this]() { return render_frame(); });
     
     auto component = CatchEvent(main_renderer, [this](Event event) { 
-        if (handle_event(event)) return true;
-
         if (event.is_mouse()) {
             auto mouse = event.mouse();
             float dx = (last_mouse_x_ == 0) ? 0 : static_cast<float>(mouse.x - last_mouse_x_);
             float dy = (last_mouse_y_ == 0) ? 0 : static_cast<float>(mouse.y - last_mouse_y_);
             last_mouse_x_ = mouse.x; last_mouse_y_ = mouse.y;
 
+            if (handle_event(event)) return true;
+
             if (mouse.button == Mouse::WheelUp)   { tar_zoom_ = tar_zoom_.load() * 1.1f; return true; }
             if (mouse.button == Mouse::WheelDown) { tar_zoom_ = tar_zoom_.load() / 1.1f; return true; }
 
             bool is_pressed = (mouse.motion == Mouse::Pressed);
             bool is_released = (mouse.motion == Mouse::Released);
-            bool is_moving = !is_pressed && !is_released;
+            // In many terminals, move is just another event where motion is Pressed or None.
+            // Since Pressed is 1 and Released is 0, we can treat everything else as moving.
+            // But we also need to respond to Pressed events if they are part of a drag.
+            bool is_active = (mouse.motion == Mouse::Pressed);
 
             if (mouse.button == Mouse::Left) {
                 if (current_tool_ == Tool::Orbit) {
-                    if (is_moving && std::abs(dx) < 50) { 
+                    if (is_active && std::abs(dx) < 50) { 
                         tar_yaw_ = tar_yaw_.load() + dx * 0.015f; 
                         tar_pitch_ = tar_pitch_.load() - dy * 0.015f; 
                     }
                 } else if (current_tool_ == Tool::Pan) {
-                    if (is_moving && std::abs(dx) < 100) {
+                    if (is_active && std::abs(dx) < 100) {
                         float y = cur_yaw_, p = cur_pitch_;
                         float sy = std::sin(y), cy = std::cos(y);
                         float sp = std::sin(p), cp = std::cos(p);
@@ -104,10 +107,10 @@ void Visualizer::run() {
                 }
                 return true;
             }
-            if (mouse.button == Mouse::Right && is_moving) {
+            if (mouse.button == Mouse::Right && is_active) {
                 tar_yaw_ = tar_yaw_.load() + dx * 0.015f; tar_pitch_ = tar_pitch_.load() - dy * 0.015f; return true;
             }
-            if (mouse.button == Mouse::Middle && is_moving) {
+            if (mouse.button == Mouse::Middle && is_active) {
                 float f = tar_dist_.load() * 0.005f, y = cur_yaw_;
                 tar_cam_x_ = tar_cam_x_.load() - (dy * 2.5f * std::cos(y) + dx * std::sin(y)) * f;
                 tar_cam_y_ = tar_cam_y_.load() - (dy * 2.5f * std::sin(y) - dx * std::cos(y)) * f;
@@ -115,6 +118,8 @@ void Visualizer::run() {
             }
             return true;
         }
+
+        if (handle_event(event)) return true;
         return false;
     });
 
@@ -178,7 +183,7 @@ Element Visualizer::render_frame() {
     Element image_panel = filler(), nav2_panel = filler();
     bool nav2_active = false;
     for (auto& display : displays_) {
-        if (!display->isEnabled()) continue;
+        if (!display->isAdded() || !display->isEnabled()) continue;
         if (display->getName() == "Image") {
             auto img_disp = std::dynamic_pointer_cast<ImageDisplay>(display);
             if (img_disp && img_disp->getEnabledTopicCount() > 0) { image_panel = img_disp->render_2d(); right_width = 64; }
@@ -210,7 +215,11 @@ Element Visualizer::render_frame() {
     if (!show_any_modal) {
         renderer_.clear();
         if (grid_display_) grid_display_->render(renderer_, c, fixed_frame_, tf_buffer_);
-        for (auto& display : displays_) display->render(renderer_, c, fixed_frame_, tf_buffer_);
+        for (auto& display : displays_) {
+            if (display->isAdded() && display->isEnabled()) {
+                display->render(renderer_, c, fixed_frame_, tf_buffer_);
+            }
+        }
         renderer_.finish(c);
     }
 
@@ -220,22 +229,28 @@ Element Visualizer::render_frame() {
 
     Elements display_list;
     int visible_plugin_count = 0;
+    std::vector<int> sidebar_to_display_idx;
     for (size_t i = 0; i < displays_.size(); ++i) {
-        if (!displays_[i]->isEnabled()) continue;
+        if (!displays_[i]->isAdded()) continue;
+        
         if (visible_plugin_count >= plugin_scroll_ && visible_plugin_count < plugin_scroll_ + 8) {
             bool selected = (static_cast<int>(i) == plugin_idx_);
+            bool enabled = displays_[i]->isEnabled();
             auto t = text(" " + displays_[i]->getName());
-            display_list.push_back(selected ? (t | inverted | color(Color::Yellow) | focus) : (t | color(Color::Green)));
+            
+            if (selected) {
+                t = t | inverted | color(enabled ? Color::Yellow : Color::RedLight) | focus;
+            } else {
+                t = t | color(enabled ? Color::Green : Color::Red);
+            }
+            display_list.push_back(t);
         }
+        sidebar_to_display_idx.push_back(i);
         visible_plugin_count++;
     }
     if (display_list.empty()) {
-        if (visible_plugin_count == 0) {
-            display_list.push_back(text(" No plugins enabled") | dim);
-            display_list.push_back(text(" Press [P] to add") | dim);
-        } else {
-            display_list.push_back(text(" (End of list)") | dim);
-        }
+        display_list.push_back(text(" No plugins added") | dim);
+        display_list.push_back(text(" Press [P] to add") | dim);
     }
 
     Elements topic_list;
@@ -476,12 +491,19 @@ bool Visualizer::handle_event(Event event) {
         if (event == Event::Return) {
             if (modal_selected_idx_ == (int)displays_.size()) { // OK
                 for (size_t i = 0; i < displays_.size(); ++i) {
-                    if (i < 64) displays_[i]->setEnabled(modal_plugin_states_[i]);
+                    if (i < 64) {
+                        bool was_added = displays_[i]->isAdded();
+                        bool now_added = modal_plugin_states_[i];
+                        displays_[i]->setAdded(now_added);
+                        // If newly added, also enable it (visible by default)
+                        if (!was_added && now_added) displays_[i]->setEnabled(true);
+                    }
                 }
                 show_plugin_modal_ = false;
-                if (plugin_idx_ < 0 || (plugin_idx_ < (int)displays_.size() && !displays_[plugin_idx_]->isEnabled())) {
+                // Recalculate plugin_idx_ if current is removed
+                if (plugin_idx_ < 0 || (plugin_idx_ < (int)displays_.size() && !displays_[plugin_idx_]->isAdded())) {
                     plugin_idx_ = -1;
-                    for (size_t i = 0; i < (int)displays_.size(); ++i) if (displays_[i]->isEnabled()) { plugin_idx_ = (int)i; break; }
+                    for (size_t i = 0; i < displays_.size(); ++i) if (displays_[i]->isAdded()) { plugin_idx_ = (int)i; break; }
                 }
                 discover_topics();
             } else if (modal_selected_idx_ == (int)displays_.size() + 1) { // Cancel
@@ -527,20 +549,32 @@ bool Visualizer::handle_event(Event event) {
                 if (mouse.button == Mouse::WheelUp)   { plugin_scroll_ = std::max(0, plugin_scroll_ - 1); screen_.PostEvent(Event::Custom); return true; }
                 if (mouse.button == Mouse::WheelDown) { plugin_scroll_++; screen_.PostEvent(Event::Custom); return true; }
                 
-                if (mouse.button == Mouse::Left && mouse.motion == Mouse::Pressed) {
+                if (mouse.motion == Mouse::Pressed) {
                     if (mouse.y == y_cursor + 1) {
-                        show_plugin_modal_ = true;
-                        modal_selected_idx_ = 0;
-                        for (size_t i = 0; i < displays_.size(); ++i) if (i < 64) modal_plugin_states_[i] = displays_[i]->isEnabled();
+                        if (mouse.button == Mouse::Left) {
+                            show_plugin_modal_ = true;
+                            modal_selected_idx_ = 0;
+                            for (size_t i = 0; i < displays_.size(); ++i) if (i < 64) modal_plugin_states_[i] = displays_[i]->isAdded();
+                        }
                         screen_.PostEvent(Event::Custom);
                         return true;
                     }
                     int list_y = mouse.y - (y_cursor + 3) + plugin_scroll_;
                     if (list_y >= 0) {
+                        // Find the Nth "Added" plugin
                         int count = 0;
-                        for (size_t i = 0; i < (int)displays_.size(); ++i) {
-                            if (displays_[i]->isEnabled()) {
-                                if (count == list_y) { plugin_idx_ = (int)i; discover_topics(); screen_.PostEvent(Event::Custom); return true; }
+                        for (size_t i = 0; i < displays_.size(); ++i) {
+                            if (displays_[i]->isAdded()) {
+                                if (count == list_y) {
+                                    if (mouse.button == Mouse::Left) {
+                                        plugin_idx_ = i;
+                                        discover_topics();
+                                    } else if (mouse.button == Mouse::Right) {
+                                        displays_[i]->setEnabled(!displays_[i]->isEnabled());
+                                    }
+                                    screen_.PostEvent(Event::Custom);
+                                    return true;
+                                }
                                 count++;
                             }
                         }
@@ -582,7 +616,7 @@ bool Visualizer::handle_event(Event event) {
         if (show_plugin_modal_) {
             modal_selected_idx_ = 0;
             for (size_t i = 0; i < displays_.size(); ++i) {
-                if (i < 64) modal_plugin_states_[i] = displays_[i]->isEnabled();
+                if (i < 64) modal_plugin_states_[i] = displays_[i]->isAdded();
             }
         }
         screen_.PostEvent(Event::Custom);

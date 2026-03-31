@@ -28,6 +28,10 @@ public:
     bool isEnabled() const { return enabled_; }
     void setEnabled(bool enabled) { enabled_ = enabled; }
     void toggle() { enabled_ = !enabled_; }
+    
+    bool isAdded() const { return added_; }
+    void setAdded(bool added) { added_ = added; }
+    
     std::string getName() const { return name_; }
     
     virtual std::string getTopic() const { return topic_; }
@@ -39,6 +43,7 @@ protected:
     std::string topic_;
     rclcpp::Node::SharedPtr node_;
     bool enabled_ = false;
+    bool added_ = false;
 };
 
 } // namespace terminal_rviz
