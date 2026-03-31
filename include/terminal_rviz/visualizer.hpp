@@ -66,6 +66,7 @@ private:
     int last_mouse_y_ = 0;
     int canvas_x_offset_ = 32;
     int canvas_y_offset_ = 2;
+    int right_width_ = 0;
 
     bool show_plugin_modal_ = false;
     int modal_selected_idx_ = 0;
@@ -74,6 +75,14 @@ private:
 
     bool show_frame_modal_ = false;
     int modal_frame_selected_idx_ = 0;
+
+    bool show_topic_modal_ = false;
+    int topic_modal_selected_idx_ = 0;
+    int topic_modal_x_ = 0;
+    int topic_modal_y_ = 0;
+    std::shared_ptr<Display> topic_target_display_;
+    int topic_target_slot_ = -1;
+    std::vector<std::string> topic_modal_list_;
 
     ftxui::ScreenInteractive screen_;
     std::atomic<bool> quit_flag_{false};

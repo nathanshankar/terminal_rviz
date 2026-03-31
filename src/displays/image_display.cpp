@@ -16,19 +16,56 @@ void ImageDisplay::setTopic(const std::string& topic) {
     auto it = std::find(enabled_topics_.begin(), enabled_topics_.end(), topic);
     if (it != enabled_topics_.end()) {
         enabled_topics_.erase(it);
-        subs_.erase(topic);
-        latest_images_.erase(topic);
+        
+        // Check if anyone else is still using this topic
+        bool still_used = std::find(enabled_topics_.begin(), enabled_topics_.end(), topic) != enabled_topics_.end();
+        if (!still_used) {
+            subs_.erase(topic);
+            latest_images_.erase(topic);
+        }
         return;
     }
     if (enabled_topics_.size() >= 2) return;
     enabled_topics_.push_back(topic);
-    try {
-        subs_[topic] = node_->create_subscription<sensor_msgs::msg::Image>(
-            topic, 10, [this, topic](const sensor_msgs::msg::Image::SharedPtr msg) {
-                this->callback(msg, topic);
-            });
-    } catch (...) {
-        enabled_topics_.pop_back();
+    if (subs_.find(topic) == subs_.end()) {
+        try {
+            subs_[topic] = node_->create_subscription<sensor_msgs::msg::Image>(
+                topic, 10, [this, topic](const sensor_msgs::msg::Image::SharedPtr msg) {
+                    this->callback(msg, topic);
+                });
+        } catch (...) {
+            enabled_topics_.pop_back();
+        }
+    }
+}
+
+void ImageDisplay::replaceTopic(int slot, const std::string& new_topic) {
+    std::lock_guard<std::mutex> lock(mtx_);
+    if (slot < 0 || slot >= (int)enabled_topics_.size()) return;
+    
+    std::string old_topic = enabled_topics_[slot];
+    if (old_topic == new_topic) return;
+
+    // Remove old slot reference
+    enabled_topics_[slot] = new_topic;
+
+    // Clean up old subscription only if no other slots use it
+    bool old_still_used = std::find(enabled_topics_.begin(), enabled_topics_.end(), old_topic) != enabled_topics_.end();
+    if (!old_still_used) {
+        subs_.erase(old_topic);
+        latest_images_.erase(old_topic);
+    }
+
+    // Create new subscription if needed
+    if (subs_.find(new_topic) == subs_.end()) {
+        try {
+            subs_[new_topic] = node_->create_subscription<sensor_msgs::msg::Image>(
+                new_topic, 10, [this, new_topic](const sensor_msgs::msg::Image::SharedPtr msg) {
+                    this->callback(msg, new_topic);
+                });
+        } catch (...) {
+            // Fallback?
+        }
     }
 }
 
@@ -42,9 +79,9 @@ void ImageDisplay::callback(const sensor_msgs::msg::Image::SharedPtr msg, const 
     latest_images_[topic] = msg;
 }
 
-void ImageDisplay::render(RvizRenderer& renderer, ftxui::Canvas& canvas, const std::string& fixed_frame, std::shared_ptr<tf2_ros::Buffer> tf_buffer) {}
+void ImageDisplay::render(RvizRenderer&, ftxui::Canvas&, const std::string&, std::shared_ptr<tf2_ros::Buffer>) {}
 
-ftxui::Element ImageDisplay::render_2d() {
+ftxui::Element ImageDisplay::render_2d(bool nav2_active) {
     if (!enabled_ || enabled_topics_.empty()) return ftxui::filler();
 
     ftxui::Elements panels;
@@ -56,12 +93,12 @@ ftxui::Element ImageDisplay::render_2d() {
 
     auto terminal = ftxui::Terminal::Size();
     int num_images = topics_copy.size();
-    int available_char_h = std::max(10, terminal.dimy - 20); 
+    int available_char_h = std::max(10, terminal.dimy - 4); 
+    if (nav2_active) available_char_h -= 10;
     int char_h_per_img = (available_char_h / num_images); 
-    int max_rows = (num_images > 1) ? 12 : 25;
-    int image_rows = std::clamp(char_h_per_img - 2, 4, max_rows);
+    int image_rows = char_h_per_img - 3;
     
-    int target_h = image_rows * 4;
+    int target_h = std::max(4, image_rows * 4);
     int target_w = (target_h * 4) / 3;
     if (target_w > 120) { target_w = 120; target_h = (target_w * 3) / 4; }
 
@@ -73,19 +110,19 @@ ftxui::Element ImageDisplay::render_2d() {
         }
 
         if (!msg) {
-            panels.push_back(ftxui::vbox({ ftxui::text(" Waiting: " + topic) | ftxui::center }) | ftxui::border | ftxui::flex);
+            panels.push_back(ftxui::vbox({ ftxui::text(" Waiting: " + topic) | ftxui::center }) | ftxui::border | ftxui::size(ftxui::HEIGHT, ftxui::EQUAL, char_h_per_img));
             continue;
         }
 
         auto c = ftxui::Canvas(target_w, target_h);
         
         // Encoding Detection
-        bool is_bgr = false, is_rgb = false, is_mono8 = false, is_16uc1 = false, is_32fc1 = false;
+        bool is_bgr = false, is_mono8 = false, is_16uc1 = false, is_32fc1 = false;
         if (msg->encoding == "mono8") is_mono8 = true;
         else if (msg->encoding == "16UC1") is_16uc1 = true;
         else if (msg->encoding == "32FC1") is_32fc1 = true;
         else if (msg->encoding == "bgr8" || msg->encoding == "bgra8") is_bgr = true;
-        else if (msg->encoding == "rgb8" || msg->encoding == "rgba8") is_rgb = true;
+        else if (msg->encoding == "rgb8" || msg->encoding == "rgba8") { /* RGB handled by default */ }
         else is_bgr = true; // Fallback
 
         int channels = (msg->encoding.find("8") != std::string::npos && msg->encoding.find("a") != std::string::npos) ? 4 : 3;
@@ -128,7 +165,7 @@ ftxui::Element ImageDisplay::render_2d() {
         panels.push_back(ftxui::vbox({
             ftxui::text(topic) | ftxui::bold | ftxui::color(ftxui::Color::Cyan) | ftxui::hcenter,
             ftxui::canvas(std::move(c)) | ftxui::size(ftxui::WIDTH, ftxui::EQUAL, target_w / 2) | ftxui::size(ftxui::HEIGHT, ftxui::EQUAL, target_h / 4) | ftxui::hcenter
-        }) | ftxui::border);
+        }) | ftxui::border | ftxui::size(ftxui::HEIGHT, ftxui::EQUAL, char_h_per_img));
     }
 
     return ftxui::vbox(std::move(panels));

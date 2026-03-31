@@ -17,10 +17,12 @@ public:
 
     void onInitialize() override;
     void render(RvizRenderer& renderer, ftxui::Canvas& canvas, const std::string& fixed_frame, std::shared_ptr<tf2_ros::Buffer> tf_buffer) override;
-    ftxui::Element render_2d() override;
+    ftxui::Element render_2d(bool nav2_active = false) override;
     
     void setTopic(const std::string& topic) override;
     bool isTopicEnabled(const std::string& topic) const;
+    std::vector<std::string> getEnabledTopics() const { std::lock_guard<std::mutex> lock(mtx_); return enabled_topics_; }
+    void replaceTopic(int slot, const std::string& new_topic);
     size_t getEnabledTopicCount() const { std::lock_guard<std::mutex> lock(mtx_); return enabled_topics_.size(); }
     std::string getMessageType() const override { return "sensor_msgs/msg/Image"; }
 

@@ -21,7 +21,7 @@ public:
     virtual void onInitialize() {}
     virtual void update(double dt) {}
     virtual void render(RvizRenderer& renderer, ftxui::Canvas& canvas, const std::string& fixed_frame, std::shared_ptr<tf2_ros::Buffer> tf_buffer) = 0;
-    virtual ftxui::Element render_2d() { return ftxui::filler(); }
+    virtual ftxui::Element render_2d(bool nav2_active = false) { return ftxui::filler(); }
     virtual bool handle_event(ftxui::Event event) { return false; }
 
     void setName(const std::string& name) { name_ = name; }

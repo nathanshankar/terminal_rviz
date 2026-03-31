@@ -182,21 +182,32 @@ Element Visualizer::render_frame() {
     int left_width = 30, right_width = 0;
     Element image_panel = filler(), nav2_panel = filler();
     bool nav2_active = false;
+
+    bool show_blocking_modal = show_plugin_modal_ || show_frame_modal_;
+    bool show_any_modal = show_blocking_modal || show_topic_modal_;
+
     for (auto& display : displays_) {
         if (!display->isAdded() || !display->isEnabled()) continue;
         if (display->getName() == "Image") {
             auto img_disp = std::dynamic_pointer_cast<ImageDisplay>(display);
-            if (img_disp && img_disp->getEnabledTopicCount() > 0) { image_panel = img_disp->render_2d(); right_width = 64; }
-        } else if (display->getName() == "Nav2") { nav2_panel = display->render_2d(); nav2_active = true; right_width = 64; }
+            if (img_disp && img_disp->getEnabledTopicCount() > 0) { 
+                right_width = 64; 
+                if (!show_any_modal) image_panel = img_disp->render_2d(nav2_active);
+            }
+        } else if (display->getName() == "Nav2") { 
+            right_width = 64; 
+            nav2_active = true; 
+            if (!show_any_modal) nav2_panel = display->render_2d();
+        }
     }
     if (terminal.dimx < 120) right_width = std::min(right_width, terminal.dimx / 3);
 
     const int target_height = std::max(10, terminal.dimy - 8);
     const int target_width = std::max(10, terminal.dimx - left_width - right_width - 6);
+    right_width_ = right_width;
     const int sw = target_width * 2, sh = target_height * 4;
     
     auto c = Canvas(sw, sh);
-    bool show_any_modal = show_plugin_modal_ || show_frame_modal_;
     
     // --- Smooth Animation ---
     const float alpha = 0.2f;
@@ -212,7 +223,7 @@ Element Visualizer::render_frame() {
     renderer_.set_camera(cur_yaw_, cur_pitch_, 0.0f, cur_dist_, cur_cam_x_, cur_cam_y_, cur_cam_z_);
     renderer_.set_zoom(cur_zoom_);
     
-    if (!show_any_modal) {
+    if (!show_blocking_modal) {
         renderer_.clear();
         if (grid_display_) grid_display_->render(renderer_, c, fixed_frame_, tf_buffer_);
         for (auto& display : displays_) {
@@ -279,10 +290,12 @@ Element Visualizer::render_frame() {
                     } else if (type == "sensor_msgs/msg/Image") {
                         auto img_disp = std::dynamic_pointer_cast<ImageDisplay>(disp);
                         bool enabled = img_disp && img_disp->isTopicEnabled(name);
-                        auto t = text((enabled ? "[X] " : "[ ] ") + name);
-                        topic_list.push_back(is_selected ? (t | inverted | color(Color::Magenta) | focus) : t);
-                    } else topic_list.push_back(is_selected ? (text(name) | inverted | color(Color::Magenta) | focus) : text(name));
-                }
+                        auto t = text(" " + name);
+                        if (enabled) t = t | color(Color::Green);
+                        else t = t | color(Color::Red);
+                        if (is_selected) t = t | inverted | focus;
+                        topic_list.push_back(t);
+                    } else topic_list.push_back(is_selected ? (text(name) | inverted | color(Color::Magenta) | focus) : text(name));                }
                 visible_topic_count++;
             }
         }
@@ -321,7 +334,10 @@ Element Visualizer::render_frame() {
                 }) | border | size(HEIGHT, EQUAL, 4),
             }) | size(WIDTH, EQUAL, left_width),
             canvas(std::move(c)) | center | flex | border,
-            vbox({ image_panel | flex, nav2_active ? nav2_panel : filler(), }) | size(WIDTH, EQUAL, right_width),
+            vbox({ 
+                (show_topic_modal_ ? (filler() | bgcolor(Color::Black)) : image_panel) | flex, 
+                nav2_active ? (show_topic_modal_ ? (filler() | size(HEIGHT, EQUAL, 10) | bgcolor(Color::Black)) : nav2_panel) : filler(), 
+            }) | size(WIDTH, EQUAL, right_width),
         }) | flex
     });
 
@@ -344,8 +360,8 @@ Element Visualizer::render_frame() {
             vbox(std::move(modal_items)) | vscroll_indicator | frame | size(HEIGHT, LESS_THAN, 15) | border,
             hbox({
                 filler(),
-                text("   OK   ") | border | (modal_selected_idx_ == (int)displays_.size() ? (inverted | color(Color::Green)) : nothing),
-                text(" CANCEL ") | border | (modal_selected_idx_ == (int)displays_.size() + 1 ? (inverted | color(Color::Red)) : nothing),
+                text(" [ OK ] ") | (modal_selected_idx_ == (int)displays_.size() ? (inverted | color(Color::Green)) : nothing),
+                text(" [ CANCEL ] ") | (modal_selected_idx_ == (int)displays_.size() + 1 ? (inverted | color(Color::Red)) : nothing),
                 filler(),
             })
         }) | size(WIDTH, GREATER_THAN, 40) | border | bgcolor(Color::Black) | center;
@@ -367,11 +383,49 @@ Element Visualizer::render_frame() {
             vbox(std::move(modal_items)) | vscroll_indicator | frame | size(HEIGHT, LESS_THAN, 15) | border,
             hbox({
                 filler(),
-                text("   OK   ") | border | (modal_frame_selected_idx_ == (int)available_frames_.size() ? (inverted | color(Color::Green)) : nothing),
-                text(" CANCEL ") | border | (modal_frame_selected_idx_ == (int)available_frames_.size() + 1 ? (inverted | color(Color::Red)) : nothing),
+                text(" [ OK ] ") | (modal_frame_selected_idx_ == (int)available_frames_.size() ? (inverted | color(Color::Green)) : nothing),
+                text(" [ CANCEL ] ") | (modal_frame_selected_idx_ == (int)available_frames_.size() + 1 ? (inverted | color(Color::Red)) : nothing),
                 filler(),
             })
         }) | size(WIDTH, GREATER_THAN, 40) | border | bgcolor(Color::Black) | center;
+    } else if (show_topic_modal_) {
+        show_any_modal = true;
+        Elements modal_items;
+        for (size_t i = 0; i < topic_modal_list_.size(); ++i) {
+            bool selected = (static_cast<int>(i) == topic_modal_selected_idx_);
+            auto t = text(" " + topic_modal_list_[i]);
+            if (selected) t = t | inverted | focus;
+            modal_items.push_back(t);
+        }
+
+        modal_box = vbox({
+            text(" SELECT TOPIC ") | bold | hcenter | color(Color::Magenta),
+            separator(),
+            vbox(std::move(modal_items)) | vscroll_indicator | frame | size(HEIGHT, LESS_THAN, 15) | border,
+            hbox({
+                filler(),
+                text(" [ CANCEL ] ") | (topic_modal_selected_idx_ == (int)topic_modal_list_.size() ? (inverted | color(Color::Red)) : nothing),
+                filler(),
+            })
+        }) | size(WIDTH, EQUAL, 60) | border | bgcolor(Color::Black);
+
+        // Position modal centered on the click slot
+        int modal_w = 60;
+        int items_h = std::min(15, (int)topic_modal_list_.size());
+        int modal_h = items_h + 7;
+        
+        int x = std::clamp(topic_modal_x_ - modal_w / 2, 0, terminal.dimx - modal_w);
+        int y = std::clamp(topic_modal_y_ - modal_h / 2, 0, terminal.dimy - modal_h);
+        
+        modal_box = vbox({
+            filler() | size(HEIGHT, EQUAL, y),
+            hbox({
+                filler() | size(WIDTH, EQUAL, x),
+                modal_box,
+                filler(),
+            }),
+            filler(),
+        });
     }
 
     if (!show_any_modal) return ftxui::dbox({ main_layout | border });
@@ -402,7 +456,7 @@ bool Visualizer::handle_event(Event event) {
             if (mouse.x >= start_x && mouse.x < start_x + modal_width &&
                 mouse.y >= start_y && mouse.y < start_y + modal_height) {
                 
-                int relative_y = mouse.y - (start_y + 3); 
+                int relative_y = mouse.y - (start_y + 4); 
                 if (relative_y >= 0 && relative_y < items_height) {
                     if (mouse.button == Mouse::Left && mouse.motion == Mouse::Pressed) {
                         modal_frame_selected_idx_ = relative_y;
@@ -411,7 +465,7 @@ bool Visualizer::handle_event(Event event) {
                     return true;
                 }
 
-                if (mouse.y >= start_y + modal_height - 3 && mouse.y < start_y + modal_height - 1) {
+                if (mouse.y == start_y + modal_height - 2) {
                     if (mouse.button == Mouse::Left && mouse.motion == Mouse::Pressed) {
                         int middle = start_x + modal_width / 2;
                         if (mouse.x < middle) modal_frame_selected_idx_ = frame_count;
@@ -458,7 +512,7 @@ bool Visualizer::handle_event(Event event) {
             if (mouse.x >= start_x && mouse.x < start_x + modal_width &&
                 mouse.y >= start_y && mouse.y < start_y + modal_height) {
                 
-                int relative_y = mouse.y - (start_y + 3); 
+                int relative_y = mouse.y - (start_y + 4); 
                 if (relative_y >= 0 && relative_y < items_height) {
                     if (mouse.button == Mouse::Left && mouse.motion == Mouse::Pressed) {
                         modal_selected_idx_ = relative_y;
@@ -468,7 +522,7 @@ bool Visualizer::handle_event(Event event) {
                     return true;
                 }
 
-                if (mouse.y >= start_y + modal_height - 3 && mouse.y < start_y + modal_height - 1) {
+                if (mouse.y == start_y + modal_height - 2) {
                     if (mouse.button == Mouse::Left && mouse.motion == Mouse::Pressed) {
                         int middle = start_x + modal_width / 2;
                         if (mouse.x < middle) modal_selected_idx_ = display_count;
@@ -517,8 +571,68 @@ bool Visualizer::handle_event(Event event) {
         return true; 
     }
 
+    if (show_topic_modal_) {
+        if (event.is_mouse()) {
+            auto mouse = event.mouse();
+            if (mouse.button == Mouse::WheelUp) { topic_modal_selected_idx_ = std::max(0, topic_modal_selected_idx_ - 1); screen_.PostEvent(Event::Custom); return true; }
+            if (mouse.button == Mouse::WheelDown) { topic_modal_selected_idx_ = std::min((int)topic_modal_list_.size(), topic_modal_selected_idx_ + 1); screen_.PostEvent(Event::Custom); return true; }
+
+            auto terminal = ftxui::Terminal::Size();
+            int modal_width = 60; 
+            int topic_count = (int)topic_modal_list_.size();
+            int items_height = std::min(15, topic_count);
+            int modal_height = items_height + 7; 
+            int start_x = std::clamp(topic_modal_x_ - modal_width / 2, 0, terminal.dimx - modal_width);
+            int start_y = std::clamp(topic_modal_y_ - modal_height / 2, 0, terminal.dimy - modal_height);
+
+            if (mouse.x >= start_x && mouse.x < start_x + modal_width &&
+                mouse.y >= start_y && mouse.y < start_y + modal_height) {
+                
+                int relative_y = mouse.y - (start_y + 4); 
+                if (relative_y >= 0 && relative_y < items_height) {
+                    if (mouse.button == Mouse::Left && mouse.motion == Mouse::Pressed) {
+                        topic_modal_selected_idx_ = relative_y;
+                        handle_event(Event::Return);
+                    }
+                    return true;
+                }
+
+                if (mouse.y == start_y + modal_height - 2) {
+                    if (mouse.button == Mouse::Left && mouse.motion == Mouse::Pressed) {
+                        topic_modal_selected_idx_ = topic_count;
+                        handle_event(Event::Return);
+                    }
+                    return true;
+                }
+            }
+            return true;
+        }
+        if (event == Event::ArrowUp) { topic_modal_selected_idx_ = std::max(0, topic_modal_selected_idx_ - 1); return true; }
+        if (event == Event::ArrowDown) { topic_modal_selected_idx_ = std::min((int)topic_modal_list_.size(), topic_modal_selected_idx_ + 1); return true; }
+        if (event == Event::Return) {
+            if (topic_modal_selected_idx_ < (int)topic_modal_list_.size()) {
+                std::string selected_topic = topic_modal_list_[topic_modal_selected_idx_];
+                if (topic_target_display_) {
+                    if (topic_target_display_->getMessageType() == "sensor_msgs/msg/Image") {
+                        auto img_disp = std::dynamic_pointer_cast<ImageDisplay>(topic_target_display_);
+                        if (img_disp) img_disp->replaceTopic(topic_target_slot_, selected_topic);
+                    } else {
+                        topic_target_display_->setTopic(selected_topic);
+                    }
+                }
+                show_topic_modal_ = false;
+            } else { // Cancel
+                show_topic_modal_ = false;
+            }
+            screen_.PostEvent(Event::Custom);
+            return true;
+        }
+        return true;
+    }
+
     if (event.is_mouse()) {
         auto mouse = event.mouse();
+        auto terminal = ftxui::Terminal::Size();
         if (mouse.x < 31) {
             int y_cursor = 3; 
 
@@ -589,24 +703,101 @@ bool Visualizer::handle_event(Event event) {
                 if (mouse.button == Mouse::WheelUp)   { topic_scroll_ = std::max(0, topic_scroll_ - 1); screen_.PostEvent(Event::Custom); return true; }
                 if (mouse.button == Mouse::WheelDown) { topic_scroll_++; screen_.PostEvent(Event::Custom); return true; }
                 
-                if (mouse.button == Mouse::Left && mouse.motion == Mouse::Pressed) {
+                if (mouse.motion == Mouse::Pressed) {
                     int list_y = mouse.y - (y_cursor + 3) + topic_scroll_;
                     if (list_y >= 0 && list_y < (int)available_topics_.size()) {
                         topic_idx_ = list_y;
                         if (plugin_idx_ >= 0) {
                             auto disp = displays_[plugin_idx_];
                             std::string type = disp->getMessageType();
+                            std::string target_topic = available_topics_[topic_idx_];
+
                             if (type == "TF") {
                                 auto tf_disp = std::dynamic_pointer_cast<TFDisplay>(disp);
-                                if (tf_disp) tf_disp->toggleFrame(available_topics_[topic_idx_]);
-                            } else if (type != "sensor_msgs/msg/Image" && type != "None") {
-                                disp->setTopic(available_topics_[topic_idx_]);
+                                if (tf_disp) {
+                                    if (mouse.button == Mouse::Left || mouse.button == Mouse::Right)
+                                        tf_disp->toggleFrame(target_topic);
+                                }
+                            } else if (type == "sensor_msgs/msg/Image") {
+                                auto img_disp = std::dynamic_pointer_cast<ImageDisplay>(disp);
+                                if (img_disp) {
+                                    bool enabled = img_disp->isTopicEnabled(target_topic);
+                                    if (mouse.button == Mouse::Left && !enabled) {
+                                        img_disp->setTopic(target_topic);
+                                    } else if (mouse.button == Mouse::Right && enabled) {
+                                        img_disp->setTopic(target_topic);
+                                    }
+                                }
+                            } else if (type != "None") {
+                                if (mouse.button == Mouse::Left) disp->setTopic(target_topic);
                             }
                         }
                         screen_.PostEvent(Event::Custom);
                     }
                 }
                 return true;
+            }
+        } else if (right_width_ > 0 && mouse.x >= terminal.dimx - right_width_ - 1) {
+            // Right panel click handling
+            int ry = mouse.y - 3; 
+            if (ry >= 0) {
+                std::shared_ptr<ImageDisplay> img_disp = nullptr;
+                bool nav2_active = false;
+                for (auto& d : displays_) {
+                    if (d->isAdded() && d->isEnabled()) {
+                        if (d->getName() == "Image") img_disp = std::dynamic_pointer_cast<ImageDisplay>(d);
+                        if (d->getName() == "Nav2") nav2_active = true;
+                    }
+                }
+
+                if (img_disp) {
+                    int n = img_disp->getEnabledTopicCount();
+                    if (n > 0) {
+                        int available_char_h = std::max(10, terminal.dimy - 4); 
+                        if (nav2_active) available_char_h -= 10;
+                        int h = available_char_h / n;
+
+                        int slot = ry / h;
+                        if (slot < n) {
+                            int slot_ry = ry % h;
+                            if (slot_ry <= 2) { // Clicked title area
+                                if (mouse.button == Mouse::Left && mouse.motion == Mouse::Pressed) {
+                                    // Open topic selection modal
+                                    topic_target_display_ = img_disp;
+                                    topic_target_slot_ = slot;
+                                    topic_modal_selected_idx_ = 0;
+                                    
+                                    // Center coordinates for the modal
+                                    topic_modal_x_ = terminal.dimx - right_width_ / 2 - 1;
+                                    topic_modal_y_ = 3 + slot * h + h / 2;
+                                    
+                                    topic_modal_list_.clear();
+                                    auto topic_map = node_->get_topic_names_and_types();
+                                    for (const auto& [name, types] : topic_map) {
+                                        for (const auto& type : types) {
+                                            if (type == "sensor_msgs/msg/Image" || type == "sensor_msgs/Image") {
+                                                topic_modal_list_.push_back(name);
+                                                break;
+                                            }
+                                        }
+                                    }
+                                    std::sort(topic_modal_list_.begin(), topic_modal_list_.end());
+                                    show_topic_modal_ = true;
+                                    screen_.PostEvent(Event::Custom);
+                                    return true;
+                                } else if (mouse.button == Mouse::Right && mouse.motion == Mouse::Pressed) {
+                                    // Toggle/Disable topic
+                                    auto enabled_topics = img_disp->getEnabledTopics();
+                                    if (slot < (int)enabled_topics.size()) {
+                                        img_disp->setTopic(enabled_topics[slot]);
+                                        screen_.PostEvent(Event::Custom);
+                                        return true;
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
             }
         }
     }

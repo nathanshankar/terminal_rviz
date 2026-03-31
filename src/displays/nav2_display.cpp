@@ -143,7 +143,7 @@ void Nav2Display::finalize_selection() {
     }
 }
 
-ftxui::Element Nav2Display::render_2d() {
+ftxui::Element Nav2Display::render_2d(bool /*nav2_active*/) {
     if (!enabled_) return ftxui::filler();
     std::lock_guard<std::mutex> lock(mtx_);
     using namespace ftxui;
