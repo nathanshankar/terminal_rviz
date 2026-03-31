@@ -58,21 +58,21 @@ void Visualizer::run() {
             float dy = (last_mouse_y_ == 0) ? 0 : static_cast<float>(mouse.y - last_mouse_y_);
             last_mouse_x_ = mouse.x; last_mouse_y_ = mouse.y;
 
-            std::stringstream ss;
-            ss << "T:" << get_tool_name() << " B:" << (int)mouse.button << " M:" << (int)mouse.motion;
-            status_msg_ = ss.str();
-
             if (mouse.button == Mouse::WheelUp)   { tar_zoom_ = tar_zoom_.load() * 1.1f; return true; }
             if (mouse.button == Mouse::WheelDown) { tar_zoom_ = tar_zoom_.load() / 1.1f; return true; }
 
             bool is_pressed = (mouse.motion == Mouse::Pressed);
             bool is_released = (mouse.motion == Mouse::Released);
+            bool is_moving = !is_pressed && !is_released;
 
             if (mouse.button == Mouse::Left) {
                 if (current_tool_ == Tool::Orbit) {
-                    if (is_pressed && std::abs(dx) < 50) { tar_yaw_ = tar_yaw_.load() + dx * 0.015f; tar_pitch_ = tar_pitch_.load() - dy * 0.015f; }
+                    if (is_moving && std::abs(dx) < 50) { 
+                        tar_yaw_ = tar_yaw_.load() + dx * 0.015f; 
+                        tar_pitch_ = tar_pitch_.load() - dy * 0.015f; 
+                    }
                 } else if (current_tool_ == Tool::Pan) {
-                    if (is_pressed && std::abs(dx) < 100) {
+                    if (is_moving && std::abs(dx) < 100) {
                         float y = cur_yaw_, p = cur_pitch_;
                         float sy = std::sin(y), cy = std::cos(y);
                         float sp = std::sin(p), cp = std::cos(p);
@@ -104,10 +104,10 @@ void Visualizer::run() {
                 }
                 return true;
             }
-            if (mouse.button == Mouse::Right && is_pressed) {
+            if (mouse.button == Mouse::Right && is_moving) {
                 tar_yaw_ = tar_yaw_.load() + dx * 0.015f; tar_pitch_ = tar_pitch_.load() - dy * 0.015f; return true;
             }
-            if (mouse.button == Mouse::Middle && is_pressed) {
+            if (mouse.button == Mouse::Middle && is_moving) {
                 float f = tar_dist_.load() * 0.005f, y = cur_yaw_;
                 tar_cam_x_ = tar_cam_x_.load() - (dy * 2.5f * std::cos(y) + dx * std::sin(y)) * f;
                 tar_cam_y_ = tar_cam_y_.load() - (dy * 2.5f * std::sin(y) - dx * std::cos(y)) * f;
@@ -389,19 +389,18 @@ bool Visualizer::handle_event(Event event) {
                 
                 int relative_y = mouse.y - (start_y + 3); 
                 if (relative_y >= 0 && relative_y < items_height) {
-                    modal_frame_selected_idx_ = relative_y;
                     if (mouse.button == Mouse::Left && mouse.motion == Mouse::Pressed) {
+                        modal_frame_selected_idx_ = relative_y;
                         handle_event(Event::Return);
                     }
                     return true;
                 }
 
                 if (mouse.y >= start_y + modal_height - 3 && mouse.y < start_y + modal_height - 1) {
-                    int middle = start_x + modal_width / 2;
-                    if (mouse.x < middle) modal_frame_selected_idx_ = frame_count;
-                    else modal_frame_selected_idx_ = frame_count + 1;
-                    
                     if (mouse.button == Mouse::Left && mouse.motion == Mouse::Pressed) {
+                        int middle = start_x + modal_width / 2;
+                        if (mouse.x < middle) modal_frame_selected_idx_ = frame_count;
+                        else modal_frame_selected_idx_ = frame_count + 1;
                         handle_event(Event::Return);
                     }
                     return true;
@@ -446,8 +445,8 @@ bool Visualizer::handle_event(Event event) {
                 
                 int relative_y = mouse.y - (start_y + 3); 
                 if (relative_y >= 0 && relative_y < items_height) {
-                    modal_selected_idx_ = relative_y;
                     if (mouse.button == Mouse::Left && mouse.motion == Mouse::Pressed) {
+                        modal_selected_idx_ = relative_y;
                         modal_plugin_states_[modal_selected_idx_] = !modal_plugin_states_[modal_selected_idx_];
                         screen_.PostEvent(Event::Custom);
                     }
@@ -455,11 +454,10 @@ bool Visualizer::handle_event(Event event) {
                 }
 
                 if (mouse.y >= start_y + modal_height - 3 && mouse.y < start_y + modal_height - 1) {
-                    int middle = start_x + modal_width / 2;
-                    if (mouse.x < middle) modal_selected_idx_ = display_count;
-                    else modal_selected_idx_ = display_count + 1;
-                    
                     if (mouse.button == Mouse::Left && mouse.motion == Mouse::Pressed) {
+                        int middle = start_x + modal_width / 2;
+                        if (mouse.x < middle) modal_selected_idx_ = display_count;
+                        else modal_selected_idx_ = display_count + 1;
                         handle_event(Event::Return);
                     }
                     return true;
@@ -499,7 +497,7 @@ bool Visualizer::handle_event(Event event) {
 
     if (event.is_mouse()) {
         auto mouse = event.mouse();
-        if (mouse.x < 30) {
+        if (mouse.x < 31) {
             int y_cursor = 3; 
 
             // 1. Fixed Frame Section
