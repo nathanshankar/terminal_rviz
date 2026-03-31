@@ -55,8 +55,10 @@ private:
     int frame_idx_ = 0;
     
     int plugin_idx_ = -1; 
+    int plugin_scroll_ = 0;
     std::vector<std::string> available_topics_;
     int topic_idx_ = 0;
+    int topic_scroll_ = 0;
     std::string status_msg_ = "Ready";
     Tool current_tool_ = Tool::Nav2;
 

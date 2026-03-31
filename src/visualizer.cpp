@@ -219,24 +219,27 @@ Element Visualizer::render_frame() {
     canvas_y_offset_ = 4;
 
     Elements display_list;
+    int visible_plugin_count = 0;
     for (size_t i = 0; i < displays_.size(); ++i) {
         if (!displays_[i]->isEnabled()) continue;
-        bool selected = (static_cast<int>(i) == plugin_idx_);
-        auto t = text(" " + displays_[i]->getName());
-        display_list.push_back(selected ? (t | inverted | color(Color::Yellow) | focus) : (t | color(Color::Green)));
+        if (visible_plugin_count >= plugin_scroll_ && visible_plugin_count < plugin_scroll_ + 8) {
+            bool selected = (static_cast<int>(i) == plugin_idx_);
+            auto t = text(" " + displays_[i]->getName());
+            display_list.push_back(selected ? (t | inverted | color(Color::Yellow) | focus) : (t | color(Color::Green)));
+        }
+        visible_plugin_count++;
     }
     if (display_list.empty()) {
-        display_list.push_back(text(" No plugins enabled") | dim);
-        display_list.push_back(text(" Press [P] to add") | dim);
+        if (visible_plugin_count == 0) {
+            display_list.push_back(text(" No plugins enabled") | dim);
+            display_list.push_back(text(" Press [P] to add") | dim);
+        } else {
+            display_list.push_back(text(" (End of list)") | dim);
+        }
     }
 
-    Elements frame_list;
-    for (size_t i = 0; i < available_frames_.size(); ++i) {
-        bool is_selected = (static_cast<int>(i) == frame_idx_);
-        auto t = text(available_frames_[i]);
-        frame_list.push_back(is_selected ? (t | inverted | color(Color::Cyan) | focus) : t);
-    }
     Elements topic_list;
+    int visible_topic_count = 0;
     if (plugin_idx_ >= 0 && plugin_idx_ < (int)displays_.size()) {
         auto disp = displays_[plugin_idx_];
         std::string type = disp->getMessageType();
@@ -245,20 +248,27 @@ Element Visualizer::render_frame() {
             std::string label = (type == "TF") ? "Frames [T/Y]:" : ("Type: " + type);
             topic_list.push_back(text(label) | dim | size(WIDTH, LESS_THAN, 25));
             topic_list.push_back(separator());
+            
+            // Limit visible topics based on height
+            int max_visible_topics = std::max(5, target_height - 25); 
+
             for (size_t i = 0; i < available_topics_.size(); ++i) {
-                bool is_selected = (static_cast<int>(i) == topic_idx_);
-                auto name = available_topics_[i];
-                if (type == "TF") {
-                    auto tf_disp = std::dynamic_pointer_cast<TFDisplay>(disp);
-                    bool enabled = tf_disp && tf_disp->isFrameEnabled(name);
-                    auto t = text((enabled ? "[X] " : "[ ] ") + name);
-                    topic_list.push_back(is_selected ? (t | inverted | color(Color::Magenta) | focus) : t);
-                } else if (type == "sensor_msgs/msg/Image") {
-                    auto img_disp = std::dynamic_pointer_cast<ImageDisplay>(disp);
-                    bool enabled = img_disp && img_disp->isTopicEnabled(name);
-                    auto t = text((enabled ? "[X] " : "[ ] ") + name);
-                    topic_list.push_back(is_selected ? (t | inverted | color(Color::Magenta) | focus) : t);
-                } else topic_list.push_back(is_selected ? (text(name) | inverted | color(Color::Magenta) | focus) : text(name));
+                if (visible_topic_count >= topic_scroll_ && visible_topic_count < topic_scroll_ + max_visible_topics) {
+                    bool is_selected = (static_cast<int>(i) == topic_idx_);
+                    auto name = available_topics_[i];
+                    if (type == "TF") {
+                        auto tf_disp = std::dynamic_pointer_cast<TFDisplay>(disp);
+                        bool enabled = tf_disp && tf_disp->isFrameEnabled(name);
+                        auto t = text((enabled ? "[X] " : "[ ] ") + name);
+                        topic_list.push_back(is_selected ? (t | inverted | color(Color::Magenta) | focus) : t);
+                    } else if (type == "sensor_msgs/msg/Image") {
+                        auto img_disp = std::dynamic_pointer_cast<ImageDisplay>(disp);
+                        bool enabled = img_disp && img_disp->isTopicEnabled(name);
+                        auto t = text((enabled ? "[X] " : "[ ] ") + name);
+                        topic_list.push_back(is_selected ? (t | inverted | color(Color::Magenta) | focus) : t);
+                    } else topic_list.push_back(is_selected ? (text(name) | inverted | color(Color::Magenta) | focus) : text(name));
+                }
+                visible_topic_count++;
             }
         }
     } else topic_list.push_back(text("Select a plugin (Tab)") | dim);
@@ -288,7 +298,7 @@ Element Visualizer::render_frame() {
                 }) | border,
                 vbox({
                     text(" TOPICS/FRAMES [T/Y] ") | bold | color(Color::Yellow),
-                    vbox(std::move(topic_list)) | border | vscroll_indicator | frame | flex,
+                    vbox(std::move(topic_list)) | border | flex,
                 }) | border | flex,
                 vbox({
                     text(" STATUS: ") | bold,
@@ -489,33 +499,37 @@ bool Visualizer::handle_event(Event event) {
 
     if (event.is_mouse()) {
         auto mouse = event.mouse();
-        if (mouse.button == Mouse::Left && mouse.motion == Mouse::Pressed) {
-            // Sidebar Click Handling (approx 30 chars wide)
-            if (mouse.x < 30) { 
-                int y_cursor = 3; // Start after top bar + separator + border
+        if (mouse.x < 30) {
+            int y_cursor = 3; 
 
-                // 1. Fixed Frame Section (6 lines: border + header + border-box)
-                if (mouse.y >= y_cursor && mouse.y < y_cursor + 6) {
+            // 1. Fixed Frame Section
+            if (mouse.y >= y_cursor && mouse.y < y_cursor + 6) {
+                if (mouse.button == Mouse::Left && mouse.motion == Mouse::Pressed) {
                     show_frame_modal_ = true;
                     modal_frame_selected_idx_ = frame_idx_;
                     screen_.PostEvent(Event::Custom);
-                    return true;
                 }
-                y_cursor += 6;
+                return true;
+            }
+            y_cursor += 6;
 
-                // 2. Tool Section (6 lines)
-                if (mouse.y >= y_cursor && mouse.y < y_cursor + 6) {
+            // 2. Tool Section
+            if (mouse.y >= y_cursor && mouse.y < y_cursor + 6) {
+                if (mouse.button == Mouse::Left && mouse.motion == Mouse::Pressed) {
                     cycle_tool();
                     screen_.PostEvent(Event::Custom);
-                    return true;
                 }
-                y_cursor += 6;
+                return true;
+            }
+            y_cursor += 6;
 
-                // 3. Plugins Section (border + header + inner-box (8 lines) + border) = 13 lines?
-                // Header(1) + OuterBorder(2) + InnerBox(8) + InnerBorder(2) = 13
-                int plugin_box_height = 13;
-                if (mouse.y >= y_cursor && mouse.y < y_cursor + plugin_box_height) {
-                    // Check if clicked header
+            // 3. Plugins Section
+            int plugin_box_height = 13;
+            if (mouse.y >= y_cursor && mouse.y < y_cursor + plugin_box_height) {
+                if (mouse.button == Mouse::WheelUp)   { plugin_scroll_ = std::max(0, plugin_scroll_ - 1); screen_.PostEvent(Event::Custom); return true; }
+                if (mouse.button == Mouse::WheelDown) { plugin_scroll_++; screen_.PostEvent(Event::Custom); return true; }
+                
+                if (mouse.button == Mouse::Left && mouse.motion == Mouse::Pressed) {
                     if (mouse.y == y_cursor + 1) {
                         show_plugin_modal_ = true;
                         modal_selected_idx_ = 0;
@@ -523,9 +537,8 @@ bool Visualizer::handle_event(Event event) {
                         screen_.PostEvent(Event::Custom);
                         return true;
                     }
-                    // Check if clicked in list
-                    int list_y = mouse.y - (y_cursor + 3); // outer border + header + inner border
-                    if (list_y >= 0 && list_y < 8) {
+                    int list_y = mouse.y - (y_cursor + 3) + plugin_scroll_;
+                    if (list_y >= 0) {
                         int count = 0;
                         for (size_t i = 0; i < (int)displays_.size(); ++i) {
                             if (displays_[i]->isEnabled()) {
@@ -534,13 +547,18 @@ bool Visualizer::handle_event(Event event) {
                             }
                         }
                     }
-                    return true;
                 }
-                y_cursor += plugin_box_height;
+                return true;
+            }
+            y_cursor += plugin_box_height;
 
-                // 4. Topics Section (remainder)
-                if (mouse.y >= y_cursor) {
-                    int list_y = mouse.y - (y_cursor + 3); // outer border + header + inner border
+            // 4. Topics Section
+            if (mouse.y >= y_cursor && mouse.y < ftxui::Terminal::Size().dimy - 4) {
+                if (mouse.button == Mouse::WheelUp)   { topic_scroll_ = std::max(0, topic_scroll_ - 1); screen_.PostEvent(Event::Custom); return true; }
+                if (mouse.button == Mouse::WheelDown) { topic_scroll_++; screen_.PostEvent(Event::Custom); return true; }
+                
+                if (mouse.button == Mouse::Left && mouse.motion == Mouse::Pressed) {
+                    int list_y = mouse.y - (y_cursor + 3) + topic_scroll_;
                     if (list_y >= 0 && list_y < (int)available_topics_.size()) {
                         topic_idx_ = list_y;
                         if (plugin_idx_ >= 0) {
@@ -554,9 +572,9 @@ bool Visualizer::handle_event(Event event) {
                             }
                         }
                         screen_.PostEvent(Event::Custom);
-                        return true;
                     }
                 }
+                return true;
             }
         }
     }
