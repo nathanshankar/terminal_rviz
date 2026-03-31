@@ -65,6 +65,14 @@ private:
     int canvas_x_offset_ = 32;
     int canvas_y_offset_ = 2;
 
+    bool show_plugin_modal_ = false;
+    int modal_selected_idx_ = 0;
+    bool modal_plugin_states_[64] = {false};
+    std::vector<std::string> plugin_names_;
+
+    bool show_frame_modal_ = false;
+    int modal_frame_selected_idx_ = 0;
+
     ftxui::ScreenInteractive screen_;
     std::atomic<bool> quit_flag_{false};
 

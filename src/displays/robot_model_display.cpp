@@ -35,9 +35,13 @@ void RobotModelDisplay::setTopic(const std::string& topic) {
 
 void RobotModelDisplay::callback(const std_msgs::msg::String::SharedPtr msg) {
     std::lock_guard<std::mutex> lock(mtx_);
+    RCLCPP_INFO(node_->get_logger(), "RobotModel: Received description (%zu bytes)", msg->data.size());
     if (model_.initString(msg->data)) {
         model_loaded_ = true;
         mesh_cache_.clear();
+        RCLCPP_INFO(node_->get_logger(), "RobotModel: Successfully parsed URDF");
+    } else {
+        RCLCPP_ERROR(node_->get_logger(), "RobotModel: Failed to parse URDF");
     }
 }
 
