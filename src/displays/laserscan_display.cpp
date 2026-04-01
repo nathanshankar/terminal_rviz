@@ -15,6 +15,7 @@ LaserScanDisplay::LaserScanDisplay(rclcpp::Node::SharedPtr node)
     : Display("LaserScan", node) {}
 
 void LaserScanDisplay::onInitialize() {
+    // Start empty - no default subscription
 }
 
 void LaserScanDisplay::setTopic(const std::string& topic) {

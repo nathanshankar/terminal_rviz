@@ -158,11 +158,8 @@ void Visualizer::discover_topics() {
             if (tf_buffer_) tf_buffer_->_getFrameStrings(topics);
         } else if (target_type != "None") {
             for (const auto& [name, types] : topic_map) {
-                std::string clean_target = target_type;
-                if (clean_target.find("/") == 0) clean_target = clean_target.substr(1);
                 for (const auto& type : types) {
-                    std::string clean_type = type; if (clean_type.find("/") == 0) clean_type = clean_type.substr(1);
-                    if (clean_type == clean_target || clean_type == target_type) {
+                    if (type == target_type) {
                         topics.push_back(name);
                         break;
                     }

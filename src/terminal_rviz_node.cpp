@@ -78,7 +78,6 @@ int main(int argc, char** argv) {
     markers_array->setName("MarkerArray");
     markers_array->setPreferredType("visualization_msgs/msg/MarkerArray");
     markers_array->onInitialize();
-    markers_array->setTopic("marker_array");
     visualizer->add_display(markers_array);
 
     // 9: Odometry

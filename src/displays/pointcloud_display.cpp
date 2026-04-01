@@ -17,6 +17,7 @@ PointCloudDisplay::PointCloudDisplay(rclcpp::Node::SharedPtr node)
     : Display("PointCloud", node) {}
 
 void PointCloudDisplay::onInitialize() {
+    // Start empty - no default subscription
 }
 
 void PointCloudDisplay::setTopic(const std::string& topic) {
