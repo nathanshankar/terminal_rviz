@@ -47,6 +47,7 @@ add_library(${PROJECT_NAME}_core
   src/displays/image_display.cpp
   src/displays/robot_model_display.cpp
   src/displays/nav2_display.cpp
+  src/config_helper.cpp
 )
 
 target_include_directories(${PROJECT_NAME}_core PUBLIC

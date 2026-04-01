@@ -14,26 +14,33 @@ public:
 
     void onInitialize() override;
     void render(RvizRenderer& renderer, ftxui::Canvas& canvas, const std::string& fixed_frame, std::shared_ptr<tf2_ros::Buffer> tf_buffer) override;
+    ftxui::Element render_2d(bool nav2_active = false, int config_scroll = 0) override;
+    bool handle_event(ftxui::Event event, int scroll_offset = 0) override;
     
     void setTopic(const std::string& topic) override;
+    bool isTopicEnabled(const std::string& topic) const override;
+    std::vector<std::string> getEnabledTopics() const override { std::lock_guard<std::mutex> lock(mtx_); return enabled_topics_; }
+    
+    TopicConfig getTopicConfig(const std::string& topic) override;
+    void setTopicConfig(const std::string& topic, const TopicConfig& config) override;
+
+    float getCenterX() const;
+    float getCenterY() const;
+    float getWidth() const;
+    float getHeight() const;
+
     std::string getMessageType() const override { return "nav_msgs/msg/OccupancyGrid"; }
 
-    float getCenterX() const { return map_center_x_; }
-    float getCenterY() const { return map_center_y_; }
-    float getWidth() const { return map_width_m_; }
-    float getHeight() const { return map_height_m_; }
+private:
+    void callback(const nav_msgs::msg::OccupancyGrid::SharedPtr msg, const std::string& topic);
 
-    private:
-    void callback(const nav_msgs::msg::OccupancyGrid::SharedPtr msg);
-
-    rclcpp::Subscription<nav_msgs::msg::OccupancyGrid>::SharedPtr sub_;
-    std::mutex mtx_;
-    nav_msgs::msg::OccupancyGrid::SharedPtr latest_map_;
-    float map_center_x_ = 0.0f;
-    float map_center_y_ = 0.0f;
-    float map_width_m_ = 10.0f;
-    float map_height_m_ = 10.0f;
-    };
+    std::map<std::string, rclcpp::Subscription<nav_msgs::msg::OccupancyGrid>::SharedPtr> subs_;
+    std::map<std::string, nav_msgs::msg::OccupancyGrid::SharedPtr> latest_maps_;
+    std::map<std::string, TopicConfig> configs_;
+    std::vector<std::string> enabled_topics_;
+    
+    mutable std::mutex mtx_;
+};
 
 } // namespace terminal_rviz
 

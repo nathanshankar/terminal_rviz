@@ -18,6 +18,7 @@ public:
     void set_zoom(float zoom) { zoom_ = zoom; }
     
     void clear();
+    void set_global_alpha(float alpha) { global_alpha_ = alpha; }
     
     void draw_point(float x, float y, float z, ftxui::Color color);
     void draw_line(float x1, float y1, float z1, float x2, float y2, float z2, ftxui::Color color);
@@ -37,6 +38,7 @@ private:
     
     float yaw_ = 0.0f, pitch_ = 0.0f, roll_ = 0.0f, dist_ = 5.0f, zoom_ = 100.0f;
     float cx_ = 0.0f, cy_ = 0.0f, cz_ = 0.0f;
+    float global_alpha_ = 1.0f;
 
     std::vector<float> z_buffer_;
     std::vector<float> char_z_buffer_;

@@ -56,6 +56,7 @@ private:
     
     int plugin_idx_ = -1; 
     int plugin_scroll_ = 0;
+    int config_scroll_ = 0;
     std::vector<std::string> available_topics_;
     int topic_idx_ = 0;
     int topic_scroll_ = 0;
@@ -83,6 +84,11 @@ private:
     std::shared_ptr<Display> topic_target_display_;
     int topic_target_slot_ = -1;
     std::vector<std::string> topic_modal_list_;
+
+    bool show_config_modal_ = false;
+    int config_modal_selected_idx_ = 0;
+    std::string config_modal_topic_;
+    std::shared_ptr<Display> config_target_display_;
 
     ftxui::ScreenInteractive screen_;
     std::atomic<bool> quit_flag_{false};

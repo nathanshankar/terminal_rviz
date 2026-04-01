@@ -81,7 +81,7 @@ void ImageDisplay::callback(const sensor_msgs::msg::Image::SharedPtr msg, const 
 
 void ImageDisplay::render(RvizRenderer&, ftxui::Canvas&, const std::string&, std::shared_ptr<tf2_ros::Buffer>) {}
 
-ftxui::Element ImageDisplay::render_2d(bool nav2_active) {
+ftxui::Element ImageDisplay::render_2d(bool nav2_active, int /*config_scroll*/) {
     if (!enabled_ || enabled_topics_.empty()) return ftxui::filler();
 
     ftxui::Elements panels;

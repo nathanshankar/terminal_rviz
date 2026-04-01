@@ -17,7 +17,7 @@ public:
 
     void onInitialize() override;
     void render(RvizRenderer& renderer, ftxui::Canvas& canvas, const std::string& fixed_frame, std::shared_ptr<tf2_ros::Buffer> tf_buffer) override;
-    ftxui::Element render_2d(bool nav2_active = false) override;
+    ftxui::Element render_2d(bool nav2_active = false, int config_scroll = 0) override;
     
     void setTopic(const std::string& topic) override;
     bool isTopicEnabled(const std::string& topic) const;

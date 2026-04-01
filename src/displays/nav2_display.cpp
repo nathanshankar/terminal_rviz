@@ -104,7 +104,7 @@ void Nav2Display::remove_last() {
     else has_selecting_pose_ = false;
 }
 
-bool Nav2Display::handle_event(ftxui::Event event) {
+bool Nav2Display::handle_event(ftxui::Event event, int /*scroll_offset*/) {
     if (event == ftxui::Event::Character('c') || event == ftxui::Event::Character('C')) { cancel_nav(); return true; }
     if (event == ftxui::Event::Character(' ') || event == ftxui::Event::Return) { send_goal(); return true; }
     if (event == ftxui::Event::Special("\x7F") || event == ftxui::Event::Backspace) { 
@@ -143,7 +143,7 @@ void Nav2Display::finalize_selection() {
     }
 }
 
-ftxui::Element Nav2Display::render_2d(bool /*nav2_active*/) {
+ftxui::Element Nav2Display::render_2d(bool /*nav2_active*/, int /*config_scroll*/) {
     if (!enabled_) return ftxui::filler();
     std::lock_guard<std::mutex> lock(mtx_);
     using namespace ftxui;
