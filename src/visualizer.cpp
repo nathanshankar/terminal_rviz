@@ -823,10 +823,11 @@ bool Visualizer::handle_event(Event event) {
         return true;
     }
 
-    // 2. Try global Nav2 shortcuts (C, Backspace) if enabled
+    // 2. Try global Nav2 shortcuts (Enter, C, Backspace) if active (Added and Enabled)
     for (auto& d : displays_) {
-        if (d->getName() == "Nav2" && d->isEnabled()) {
-            if (event == Event::Character('c') || event == Event::Character('C') ||
+        if (d->getName() == "Nav2" && d->isAdded() && d->isEnabled()) {
+            if (event == Event::Return ||
+                event == Event::Character('c') || event == Event::Character('C') ||
                 event == Event::Special("\x7F") || event == Event::Backspace) {
                 if (d->handle_event(event)) return true;
             }
