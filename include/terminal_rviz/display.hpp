@@ -14,10 +14,11 @@
 namespace terminal_rviz {
 
 struct TopicConfig {
-    std::string color_style = "Flat"; // Flat, Axis, Intensity
+    std::string color_style = "Flat"; // Flat, Axis, RGB
     float alpha = 1.0f;
     float size = 0.05f;
     uint8_t r = 255, g = 255, b = 255;
+    int color_index = 0; // 0-9 presets
     std::string axis = "Z"; // X, Y, Z
 };
 

@@ -5,9 +5,20 @@ namespace terminal_rviz {
 
 using namespace ftxui;
 
+const std::vector<Color> ConfigHelper::preset_colors = {
+    Color::White, Color::Red, Color::Green, Color::Blue, Color::Yellow,
+    Color::Cyan, Color::Magenta, Color::Orange1, Color::Green1, Color::DeepPink1
+};
+
+const std::vector<std::string> ConfigHelper::preset_names = {
+    "White", "Red", "Green", "Blue", "Yellow",
+    "Cyan", "Magenta", "Orange", "Lime", "Pink"
+};
+
 ftxui::Element ConfigHelper::render_summary(const std::string& topic, const TopicConfig& cfg) {
     std::string state = cfg.color_style;
     if (cfg.color_style == "Axis") state += "-" + cfg.axis;
+    if (cfg.color_style == "Flat") state = preset_names[cfg.color_index % 10];
     
     return hbox({
         text(" " + topic) | color(Color::Green) | flex,
@@ -21,15 +32,23 @@ ftxui::Element ConfigHelper::render_edit_modal(const std::string& topic, const T
     auto terminal = Terminal::Size();
     
     Elements items;
-    // 0: Style
+    // 0: Style (Always show)
     auto t_style = hbox({ text(" Style: "), text(cfg.color_style) | color(Color::Cyan) | bold });
     if (selected_idx == 0) t_style = t_style | inverted | focus;
     items.push_back(t_style);
 
-    // 1: Axis
-    auto t_axis = hbox({ text(" Axis:  "), text(cfg.axis) | color(Color::Yellow) | bold });
-    if (selected_idx == 1) t_axis = t_axis | inverted | focus;
-    items.push_back(t_axis);
+    // 1: Contextual Setting (Axis OR Color)
+    if (cfg.color_style == "Axis") {
+        auto t_axis = hbox({ text(" Axis:  "), text(cfg.axis) | color(Color::Yellow) | bold });
+        if (selected_idx == 1) t_axis = t_axis | inverted | focus;
+        items.push_back(t_axis);
+    } else if (cfg.color_style == "Flat") {
+        auto t_color = hbox({ text(" Color: "), text(preset_names[cfg.color_index % 10]) | color(preset_colors[cfg.color_index % 10]) | bold });
+        if (selected_idx == 1) t_color = t_color | inverted | focus;
+        items.push_back(t_color);
+    } else {
+        items.push_back(text(" (No Mode Settings)") | dim);
+    }
 
     // 2: Size Slider
     auto t_size = hbox({
@@ -61,7 +80,6 @@ ftxui::Element ConfigHelper::render_edit_modal(const std::string& topic, const T
         })
     }) | size(WIDTH, EQUAL, right_panel_width - 4) | border | bgcolor(Color::Black);
 
-    // Position exactly in the bottom-right pane area
     int x = terminal.dimx - right_panel_width;
     int y = terminal.dimy - 14;
 
@@ -96,13 +114,18 @@ bool ConfigHelper::handle_edit_event(ftxui::Event event, TopicConfig& cfg,
     if (event == Event::Return || event == Event::Character(' ')) {
         if (selected_idx == 4) show_modal = false;
         else {
-            if (selected_idx == 0) { // Style
+            if (selected_idx == 0) { // Style Cycle
                 if (cfg.color_style == "Flat") cfg.color_style = "Axis";
+                else if (cfg.color_style == "Axis") cfg.color_style = "RGB";
                 else cfg.color_style = "Flat";
-            } else if (selected_idx == 1) { // Axis
-                if (cfg.axis == "Z") cfg.axis = "X";
-                else if (cfg.axis == "X") cfg.axis = "Y";
-                else cfg.axis = "Z";
+            } else if (selected_idx == 1) { // Contextual Cycle
+                if (cfg.color_style == "Axis") {
+                    if (cfg.axis == "Z") cfg.axis = "X";
+                    else if (cfg.axis == "X") cfg.axis = "Y";
+                    else cfg.axis = "Z";
+                } else if (cfg.color_style == "Flat") {
+                    cfg.color_index = (cfg.color_index + 1) % 10;
+                }
             } else if (selected_idx == 2) { // Size
                 cfg.size += 0.01f; if (cfg.size > 0.2f) cfg.size = 0.01f;
             } else if (selected_idx == 3) { // Alpha

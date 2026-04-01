@@ -11,6 +11,9 @@ namespace terminal_rviz {
 
 class ConfigHelper {
 public:
+    static const std::vector<ftxui::Color> preset_colors;
+    static const std::vector<std::string> preset_names;
+
     static ftxui::Element render_summary(const std::string& topic, const TopicConfig& cfg);
     
     static ftxui::Element render_edit_modal(const std::string& topic, const TopicConfig& cfg, 

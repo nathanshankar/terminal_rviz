@@ -8,6 +8,7 @@
 #endif
 #include <algorithm>
 #include <limits>
+#include <cstring>
 #include "ftxui/dom/elements.hpp"
 
 namespace terminal_rviz {
@@ -92,46 +93,83 @@ void PointCloudDisplay::render(RvizRenderer& renderer, ftxui::Canvas& canvas, co
             tf2::fromMsg(transform_msg.transform, pc_to_world);
         } catch (...) { continue; }
 
+        bool has_rgb = false;
+        try {
+            sensor_msgs::PointCloud2ConstIterator<uint8_t> test_rgb(*msg, "rgb");
+            has_rgb = true;
+        } catch (...) {
+            try {
+                sensor_msgs::PointCloud2ConstIterator<uint8_t> test_rgba(*msg, "rgba");
+                has_rgb = true;
+            } catch (...) {}
+        }
+
         sensor_msgs::PointCloud2ConstIterator<float> iter_x(*msg, "x"), iter_y(*msg, "y"), iter_z(*msg, "z");
+        
+        // Use local variable for iter_rgb to avoid scope issues
+        std::unique_ptr<sensor_msgs::PointCloud2ConstIterator<uint8_t>> iter_rgb_ptr;
+        if (has_rgb) {
+            try {
+                iter_rgb_ptr = std::make_unique<sensor_msgs::PointCloud2ConstIterator<uint8_t>>(*msg, "rgb");
+            } catch (...) {
+                try {
+                    iter_rgb_ptr = std::make_unique<sensor_msgs::PointCloud2ConstIterator<uint8_t>>(*msg, "rgba");
+                } catch (...) { has_rgb = false; }
+            }
+        }
+
         size_t total_points = msg->width * msg->height;
         if (total_points == 0) continue;
 
         size_t max_render = 20000;
         size_t skip = std::max((size_t)1, total_points / max_render);
 
-        float min_val = std::numeric_limits<float>::max();
-        float max_val = std::numeric_limits<float>::lowest();
-        bool found_any = false;
+        float min_val = 0.0f, max_val = 1.0f;
+        float range_inv = 1.0f;
 
-        auto r_iter_x = iter_x; auto r_iter_y = iter_y; auto r_iter_z = iter_z;
-        for (size_t i = 0; i < total_points; i += skip, r_iter_x += skip, r_iter_y += skip, r_iter_z += skip) {
-            float val = (cfg.axis == "Y") ? *r_iter_y : ((cfg.axis == "Z") ? *r_iter_z : *r_iter_x);
-            if (std::isfinite(val)) {
-                if (val < min_val) min_val = val;
-                if (val > max_val) max_val = val;
-                found_any = true;
+        if (cfg.color_style == "Axis") {
+            min_val = std::numeric_limits<float>::max();
+            max_val = std::numeric_limits<float>::lowest();
+            bool found_any = false;
+            auto r_iter_x = iter_x; auto r_iter_y = iter_y; auto r_iter_z = iter_z;
+            for (size_t i = 0; i < total_points; i += skip, r_iter_x += skip, r_iter_y += skip, r_iter_z += skip) {
+                float val = (cfg.axis == "Y") ? *r_iter_y : ((cfg.axis == "Z") ? *r_iter_z : *r_iter_x);
+                if (std::isfinite(val)) {
+                    if (val < min_val) min_val = val;
+                    if (val > max_val) max_val = val;
+                    found_any = true;
+                }
             }
+            if (!found_any) { min_val = 0.0f; max_val = 1.0f; }
+            if (std::abs(max_val - min_val) < 0.001f) max_val = min_val + 1.0f;
+            range_inv = 1.0f / (max_val - min_val);
         }
-        if (!found_any) { min_val = 0.0f; max_val = 1.0f; }
-        if (std::abs(max_val - min_val) < 0.001f) max_val = min_val + 1.0f;
-        float range_inv = 1.0f / (max_val - min_val);
 
         for (size_t i = 0; i < total_points; i += skip, iter_x += skip, iter_y += skip, iter_z += skip) {
-            float val = (cfg.axis == "Y") ? *iter_y : ((cfg.axis == "Z") ? *iter_z : *iter_x);
-            if (!std::isfinite(val)) continue;
-
             tf2::Vector3 p_world = pc_to_world * tf2::Vector3(*iter_x, *iter_y, *iter_z);
             int sx, sy; float sz;
             if (renderer.project(p_world.x(), p_world.y(), p_world.z(), sx, sy, sz)) {
                 uint8_t r_c = 255, g_c = 255, b_c = 255;
-                if (cfg.color_style == "Flat") { r_c = cfg.r; g_c = cfg.g; b_c = cfg.b; }
-                else {
+                
+                if (cfg.color_style == "RGB" && has_rgb && iter_rgb_ptr) {
+                    auto it_val = (*iter_rgb_ptr) + i;
+                    r_c = it_val[2]; g_c = it_val[1]; b_c = it_val[0];
+                } else if (cfg.color_style == "Flat") {
+                    // Pre-defined high-fidelity preset colors
+                    static const uint8_t preset_r[] = {255, 255, 0,   0,   255, 0,   255, 255, 0,   255};
+                    static const uint8_t preset_g[] = {255, 0,   255, 0,   255, 255, 0,   127, 255, 127};
+                    static const uint8_t preset_b[] = {255, 0,   0,   255, 0,   255, 255, 0,   0,   127};
+                    int idx = cfg.color_index % 10;
+                    r_c = preset_r[idx]; g_c = preset_g[idx]; b_c = preset_b[idx];
+                } else {
+                    float val = (cfg.axis == "Y") ? *iter_y : ((cfg.axis == "Z") ? *iter_z : *iter_x);
                     float v = std::clamp((val - min_val) * range_inv, 0.0f, 1.0f);
                     if (v < 0.25f) { r_c = 255; g_c = static_cast<uint8_t>(v * 1020); b_c = 0; }
                     else if (v < 0.5f) { r_c = static_cast<uint8_t>((0.5f - v) * 1020); g_c = 255; b_c = 0; }
                     else if (v < 0.75f) { r_c = 0; g_c = 255; b_c = static_cast<uint8_t>((v - 0.5f) * 1020); }
                     else { r_c = 0; g_c = static_cast<uint8_t>((1.0f - v) * 1020); b_c = 255; }
                 }
+                
                 r_c = static_cast<uint8_t>(r_c * cfg.alpha);
                 g_c = static_cast<uint8_t>(g_c * cfg.alpha);
                 b_c = static_cast<uint8_t>(b_c * cfg.alpha);
