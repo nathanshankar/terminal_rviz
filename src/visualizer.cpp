@@ -57,7 +57,7 @@ void Visualizer::run() {
             float dy = (last_mouse_y_ == 0) ? 0 : static_cast<float>(mouse.y - last_mouse_y_);
             last_mouse_x_ = mouse.x; last_mouse_y_ = mouse.y;
 
-            if (handle_event(event)) return true;
+            if (handle_event(event, static_cast<int>(dx))) return true;
 
             if (mouse.button == Mouse::WheelUp)   { tar_zoom_ = tar_zoom_.load() * 1.1f; return true; }
             if (mouse.button == Mouse::WheelDown) { tar_zoom_ = tar_zoom_.load() / 1.1f; return true; }
@@ -529,7 +529,7 @@ Element Visualizer::render_frame() {
     });
 }
 
-bool Visualizer::handle_event(Event event) {
+bool Visualizer::handle_event(Event event, int mouse_dx) {
     if (event == Event::Character('q') || event == Event::Escape) { quit_flag_ = true; screen_.Exit(); return true; }
     
     if (show_frame_modal_) {
@@ -748,12 +748,23 @@ bool Visualizer::handle_event(Event event) {
     }
 
     if (show_config_modal_) {
+        bool was_dragging = is_dragging_config_;
+        if (event.is_mouse()) {
+            auto mouse = event.mouse();
+            if (mouse.motion == Mouse::Pressed) is_dragging_config_ = true;
+            if (mouse.motion == Mouse::Released) is_dragging_config_ = false;
+        }
+
         auto cfg = config_target_display_->getTopicConfig(config_modal_topic_);
-        if (ConfigHelper::handle_edit_event(event, cfg, config_modal_selected_idx_, 
-                                          show_config_modal_, right_width_,
-                                          config_target_display_->getName())) {
+        if (ConfigHelper::handle_edit_event(event, cfg, config_modal_selected_idx_,
+                                          show_config_modal_, right_width_, 
+                                          config_target_display_->getName(),
+                                          mouse_dx,
+                                          was_dragging)) {
+
             config_target_display_->setTopicConfig(config_modal_topic_, cfg);
             screen_.PostEvent(Event::Custom);
+            if (!show_config_modal_) is_dragging_config_ = false; // Reset if DONE clicked
             return true;
         }
         return true;

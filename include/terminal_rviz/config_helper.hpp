@@ -38,9 +38,12 @@ public:
 
     // Returns true if handled, updates cfg
     static bool handle_edit_event(ftxui::Event event, TopicConfig& cfg, 
-                                int& selected_idx, bool& show_modal,
-                                int right_panel_width,
-                                const std::string& display_name);
+                                   int& selected_idx, bool& show_modal,
+                                   int right_panel_width,
+                                   const std::string& display_name,
+                                   int mouse_dx = 0,
+                                   bool is_dragging = false);
+
 };
 
 } // namespace terminal_rviz

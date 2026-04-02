@@ -40,7 +40,7 @@ private:
     void discover_frames();
     void discover_topics();
     ftxui::Element render_frame();
-    bool handle_event(ftxui::Event event);
+    bool handle_event(ftxui::Event event, int mouse_dx = 0);
 
     rclcpp::Node::SharedPtr node_;
     std::shared_ptr<tf2_ros::Buffer> tf_buffer_;
@@ -92,6 +92,8 @@ private:
     int config_modal_selected_idx_ = 0;
     std::string config_modal_topic_;
     std::shared_ptr<Display> config_target_display_;
+    bool is_dragging_config_ = false;
+    int drag_captured_idx_ = -1;
 
     ftxui::ScreenInteractive screen_;
     std::atomic<bool> quit_flag_{false};

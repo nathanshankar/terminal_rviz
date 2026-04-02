@@ -41,7 +41,8 @@ RelevantSettings ConfigHelper::get_relevant_settings(const std::string& display_
         {"AccelStamped",         {false, true,  false, false, false, false, true,  true,  false, false}},
         {"Effort",               {false, true,  false, false, false, false, true,  true,  false, false}},
         {"RobotModel",           {false, false, false, false, false, false, false, true,  false, false}},
-        {"GridCells",            {false, true,  false, false, false, false, false, true,  false, false}}
+        {"GridCells",            {false, true,  false, false, false, false, false, true,  false, false}},
+        {"LegacyPointCloud",     {false, true,  false, false, false, false, true,  true,  false, false}}
     };
 
     auto it = registry.find(display_name);
@@ -81,9 +82,10 @@ ftxui::Element ConfigHelper::render_edit_modal(const std::string& topic, const T
     };
 
     // 0: Color Mode
-    if (r.mode) {
+    bool supports_mode = (display_name == "PointCloud2" || display_name == "LaserScan" || display_name == "Marker" || display_name == "MarkerArray");
+    if (supports_mode) {
         std::string mode_text = cfg.color_style;
-        if (cfg.color_style == "RGB") mode_text = "RGB (Cloud)";
+        if (display_name == "PointCloud2" && cfg.color_style == "RGB") mode_text = "RGB (Cloud)";
         add_item(0, hbox({ text(" Mode:    "), text(mode_text) | color(Color::Cyan) | bold }), true);
     }
 
@@ -100,11 +102,13 @@ ftxui::Element ConfigHelper::render_edit_modal(const std::string& topic, const T
         add_item(10, hbox({ text(" Angular: "), text(preset_names[cfg.color_index_2 % 10]) | color(preset_colors[cfg.color_index_2 % 10]) | bold }), true);
     }
 
-    // 2: Size
+    // 2: Size (Open ended scrubber)
     add_item(2, hbox({
         text(" Size:    "),
-        gauge(std::clamp(cfg.size / 2.0f, 0.0f, 1.0f)) | color(Color::Green) | size(WIDTH, EQUAL, 20),
-        text(" " + std::to_string(cfg.size).substr(0,4)) | dim
+        text("< ") | bold | color(Color::GrayDark),
+        text(std::to_string(cfg.size).substr(0,5)) | color(Color::Green) | bold | size(WIDTH, EQUAL, 8),
+        text(" >") | bold | color(Color::GrayDark),
+        text(" (Drag)") | dim
     }), r.size);
 
     // 3: Alpha
@@ -153,17 +157,16 @@ ftxui::Element ConfigHelper::render_edit_modal(const std::string& topic, const T
 bool ConfigHelper::handle_edit_event(ftxui::Event event, TopicConfig& cfg, 
                                    int& selected_idx, bool& show_modal,
                                    int right_panel_width,
-                                   const std::string& display_name) {
+                                   const std::string& display_name,
+                                   int mouse_dx,
+                                   bool is_dragging) {
     RelevantSettings r = get_relevant_settings(display_name);
     std::vector<int> active_indices;
     
     if (r.mode) active_indices.push_back(0);
-    
     if (cfg.color_style == "Flat") { if (r.color) active_indices.push_back(1); }
     else if (cfg.color_style == "Axis") { if (r.axis) active_indices.push_back(1); }
-    
     if (r.color_2 && cfg.color_style == "Flat") active_indices.push_back(10);
-
     if (r.size) active_indices.push_back(2);
     if (r.alpha) active_indices.push_back(3);
     if (r.style) active_indices.push_back(4);
@@ -175,6 +178,59 @@ bool ConfigHelper::handle_edit_event(ftxui::Event event, TopicConfig& cfg,
     if (it == active_indices.end()) {
         selected_idx = active_indices[0];
         current_active_idx = 0;
+    }
+
+    if (event.is_mouse()) {
+        auto mouse = event.mouse();
+        auto terminal = Terminal::Size();
+        int start_x = terminal.dimx - right_panel_width;
+        int start_y = terminal.dimy - 20;
+        
+        // 1. Update selection only if NOT dragging (Hover support)
+        if (!is_dragging) {
+            if (mouse.x >= start_x && mouse.x < terminal.dimx && mouse.y >= start_y) {
+                int ry = mouse.y - (start_y + 3);
+                if (ry >= 0 && ry < (int)active_indices.size() - 1) {
+                    selected_idx = active_indices[ry];
+                } else {
+                    // Precise check for DONE button line: 3 header/sep + items + 1 separator
+                    int done_y = start_y + 3 + (int)active_indices.size() - 1 + 1;
+                    if (mouse.y == done_y) {
+                        selected_idx = 6;
+                    }
+                }
+            }
+        }
+
+        // 2. Perform action on current selection if mouse button is down
+        if (mouse.button == Mouse::Left) {
+            if (selected_idx == 2) { // Size: Scrubber
+                if (is_dragging || mouse.motion == Mouse::Pressed) {
+                    cfg.size = std::max(0.001f, cfg.size + mouse_dx * 0.01f);
+                }
+                return true;
+            } else if (selected_idx == 3) { // Alpha
+                if (is_dragging || mouse.motion == Mouse::Pressed) {
+                    float p = std::clamp(static_cast<float>(mouse.x - (start_x + 11)) / 20.0f, 0.0f, 1.0f);
+                    cfg.alpha = p;
+                }
+                return true;
+            } else if (selected_idx == 5) { // History
+                if (is_dragging || mouse.motion == Mouse::Pressed) {
+                    float p = std::clamp(static_cast<float>(mouse.x - (start_x + 11)) / 20.0f, 0.0f, 1.0f);
+                    cfg.history_length = static_cast<int>(p * 100.0f);
+                }
+                return true;
+            }
+            
+            // For buttons/toggles, only respond to initial Press
+            if (mouse.motion == Mouse::Pressed && !is_dragging) {
+                if (selected_idx == 6) show_modal = false;
+                else handle_edit_event(Event::Return, cfg, selected_idx, show_modal, right_panel_width, display_name);
+                return true;
+            }
+        }
+        return (mouse.x >= start_x || is_dragging); 
     }
 
     if (event == Event::ArrowUp) { 
@@ -244,15 +300,6 @@ bool ConfigHelper::handle_edit_event(ftxui::Event event, TopicConfig& cfg,
         return true;
     }
 
-    if (event.is_mouse()) {
-        auto mouse = event.mouse();
-        auto terminal = Terminal::Size();
-        if (mouse.x >= terminal.dimx - right_panel_width && mouse.y >= terminal.dimy - 5) {
-            selected_idx = 6;
-            if (mouse.button == Mouse::Left && mouse.motion == Mouse::Pressed) show_modal = false;
-            return true;
-        }
-    }
     return false;
 }
 
