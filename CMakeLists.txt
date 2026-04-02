@@ -35,19 +35,38 @@ FetchContent_MakeAvailable(ftxui)
 
 # Create a library for the core visualizer/renderer
 add_library(${PROJECT_NAME}_core
-  src/renderer.cpp
-  src/display.cpp
-  src/displays/grid_display.cpp
-  src/displays/pointcloud_display.cpp
-  src/displays/marker_display.cpp
-  src/displays/tf_display.cpp
-  src/displays/laserscan_display.cpp
-  src/displays/map_display.cpp
-  src/displays/odometry_display.cpp
-  src/displays/image_display.cpp
-  src/displays/robot_model_display.cpp
-  src/displays/nav2_display.cpp
   src/config_helper.cpp
+  src/display.cpp
+  src/displays/accel_stamped_display.cpp
+  src/displays/axes_display.cpp
+  src/displays/camera_info_display.cpp
+  src/displays/effort_display.cpp
+  src/displays/fluid_pressure_display.cpp
+  src/displays/grid_cells_display.cpp
+  src/displays/grid_display.cpp
+  src/displays/illuminance_display.cpp
+  src/displays/image_display.cpp
+  src/displays/laserscan_display.cpp
+  src/displays/legacy_pointcloud_display.cpp
+  src/displays/map_display.cpp
+  src/displays/marker_display.cpp
+  src/displays/nav2_display.cpp
+  src/displays/odometry_display.cpp
+  src/displays/path_display.cpp
+  src/displays/point_stamped_display.cpp
+  src/displays/pointcloud_display.cpp
+  src/displays/polygon_display.cpp
+  src/displays/pose_array_display.cpp
+  src/displays/pose_display.cpp
+  src/displays/pose_with_covariance_display.cpp
+  src/displays/range_display.cpp
+  src/displays/relative_humidity_display.cpp
+  src/displays/robot_model_display.cpp
+  src/displays/temperature_display.cpp
+  src/displays/tf_display.cpp
+  src/displays/twist_stamped_display.cpp
+  src/displays/wrench_display.cpp
+  src/renderer.cpp
 )
 
 target_include_directories(${PROJECT_NAME}_core PUBLIC

@@ -1,4 +1,4 @@
-#include "terminal_rviz/displays/laserscan_display.hpp"
+#include "terminal_rviz/displays/temperature_display.hpp"
 #include "terminal_rviz/config_helper.hpp"
 #if __has_include(<tf2_geometry_msgs/tf2_geometry_msgs.hpp>)
 #include <tf2_geometry_msgs/tf2_geometry_msgs.hpp>
@@ -6,16 +6,15 @@
 #include <tf2_geometry_msgs/tf2_geometry_msgs.h>
 #endif
 #include <algorithm>
+#include <iomanip>
+#include <sstream>
 
 namespace terminal_rviz {
 
-LaserScanDisplay::LaserScanDisplay(rclcpp::Node::SharedPtr node)
-    : Display("LaserScan", node) {}
+TemperatureDisplay::TemperatureDisplay(rclcpp::Node::SharedPtr node)
+    : Display("Temperature", node) {}
 
-void LaserScanDisplay::onInitialize() {
-}
-
-void LaserScanDisplay::setTopic(const std::string& topic) {
+void TemperatureDisplay::setTopic(const std::string& topic) {
     std::lock_guard<std::mutex> lock(mtx_);
     auto it = std::find(enabled_topics_.begin(), enabled_topics_.end(), topic);
     if (it != enabled_topics_.end()) {
@@ -29,34 +28,34 @@ void LaserScanDisplay::setTopic(const std::string& topic) {
     enabled_topics_.push_back(topic);
     TopicConfig cfg;
     cfg.color_index = 1; // Red default
-    cfg.size = 0.05f;
+    cfg.size = 0.1f;
     cfg.style = "Points";
     configs_[topic] = cfg;
     
-    subs_[topic] = node_->create_subscription<sensor_msgs::msg::LaserScan>(
-        topic, 10, [this, topic](const sensor_msgs::msg::LaserScan::SharedPtr msg) {
+    subs_[topic] = node_->create_subscription<sensor_msgs::msg::Temperature>(
+        topic, 10, [this, topic](const sensor_msgs::msg::Temperature::SharedPtr msg) {
             std::lock_guard<std::mutex> lock(mtx_);
             latest_msgs_[topic] = msg;
         });
 }
 
-bool LaserScanDisplay::isTopicEnabled(const std::string& topic) const {
+bool TemperatureDisplay::isTopicEnabled(const std::string& topic) const {
     std::lock_guard<std::mutex> lock(mtx_);
     return std::find(enabled_topics_.begin(), enabled_topics_.end(), topic) != enabled_topics_.end();
 }
 
-TopicConfig LaserScanDisplay::getTopicConfig(const std::string& topic) {
+TopicConfig TemperatureDisplay::getTopicConfig(const std::string& topic) {
     std::lock_guard<std::mutex> lock(mtx_);
     if (configs_.count(topic)) return configs_[topic];
     return TopicConfig();
 }
 
-void LaserScanDisplay::setTopicConfig(const std::string& topic, const TopicConfig& config) {
+void TemperatureDisplay::setTopicConfig(const std::string& topic, const TopicConfig& config) {
     std::lock_guard<std::mutex> lock(mtx_);
     configs_[topic] = config;
 }
 
-void LaserScanDisplay::render(RvizRenderer& renderer, ftxui::Canvas&, const std::string& fixed_frame, std::shared_ptr<tf2_ros::Buffer> tf_buffer) {
+void TemperatureDisplay::render(RvizRenderer& renderer, ftxui::Canvas&, const std::string& fixed_frame, std::shared_ptr<tf2_ros::Buffer> tf_buffer) {
     if (!enabled_) return;
 
     std::vector<std::string> topics;
@@ -66,7 +65,7 @@ void LaserScanDisplay::render(RvizRenderer& renderer, ftxui::Canvas&, const std:
     }
 
     for (const auto& topic : topics) {
-        sensor_msgs::msg::LaserScan::SharedPtr msg;
+        sensor_msgs::msg::Temperature::SharedPtr msg;
         TopicConfig cfg;
         {
             std::lock_guard<std::mutex> lock(mtx_);
@@ -82,39 +81,26 @@ void LaserScanDisplay::render(RvizRenderer& renderer, ftxui::Canvas&, const std:
             tf2::fromMsg(t_msg.transform, frame_to_world);
         } catch (...) { continue; }
 
-        uint8_t r_b = 255, g_b = 255, b_b = 255;
+        uint8_t r_c = 255, g_c = 255, b_c = 255;
         if (cfg.color_style == "Flat") {
             static const uint8_t preset_r[] = {255, 255, 0,   0,   255, 0,   255, 255, 0,   255};
             static const uint8_t preset_g[] = {255, 0,   255, 0,   255, 255, 0,   127, 255, 127};
             static const uint8_t preset_b[] = {255, 0,   0,   255, 0,   255, 255, 0,   0,   127};
             int idx = cfg.color_index % 10;
-            r_b = preset_r[idx]; g_b = preset_g[idx]; b_b = preset_b[idx];
+            r_c = preset_r[idx]; g_c = preset_g[idx]; b_c = preset_b[idx];
         }
         
-        for (size_t i = 0; i < msg->ranges.size(); ++i) {
-            float r = msg->ranges[i];
-            if (r < msg->range_min || r > msg->range_max) continue;
-            
-            float angle = msg->angle_min + i * msg->angle_increment;
-            tf2::Vector3 p_local(r * std::cos(angle), r * std::sin(angle), 0);
-            tf2::Vector3 p_world = frame_to_world * p_local;
-            
-            uint8_t r_c = r_b, g_c = g_b, b_c = b_b;
-            if (cfg.color_style == "Axis") {
-                float val = (cfg.axis == "X") ? p_world.x() : ((cfg.axis == "Y") ? p_world.y() : p_world.z());
-                float v = std::clamp((val + 2.0f) / 4.0f, 0.0f, 1.0f); // Default 4m range for axis coloring
-                if (v < 0.25f) { r_c = 255; g_c = static_cast<uint8_t>(v * 1020); b_c = 0; }
-                else if (v < 0.5f) { r_c = static_cast<uint8_t>((0.5f - v) * 1020); g_c = 255; b_c = 0; }
-                else if (v < 0.75f) { r_c = 0; g_c = 255; b_c = static_cast<uint8_t>((v - 0.5f) * 1020); }
-                else { r_c = 0; g_c = static_cast<uint8_t>((1.0f - v) * 1020); b_c = 255; }
-            }
+        tf2::Vector3 p = frame_to_world * tf2::Vector3(0, 0, 0);
 
-            render_styled_point(renderer, p_world.x(), p_world.y(), p_world.z(), cfg, r_c, g_c, b_c);
-        }
+        render_styled_point(renderer, p.x(), p.y(), p.z(), cfg, r_c, g_c, b_c);
+        
+        std::stringstream ss;
+        ss << std::fixed << std::setprecision(1) << msg->temperature << " C";
+        renderer.draw_text(p.x(), p.y(), p.z() + 0.1f, ss.str(), ftxui::Color::RGB(r_c, g_c, b_c));
     }
 }
 
-ftxui::Element LaserScanDisplay::render_2d(bool /*nav2_active*/, int config_scroll) {
+ftxui::Element TemperatureDisplay::render_2d(bool /*nav2_active*/, int config_scroll) {
     using namespace ftxui;
     std::lock_guard<std::mutex> lock(mtx_);
     Elements topics_ui;
@@ -126,13 +112,13 @@ ftxui::Element LaserScanDisplay::render_2d(bool /*nav2_active*/, int config_scro
         count++;
     }
     return vbox({
-        hbox({ text(" LaserScan Settings ") | bold | color(Color::Yellow), filler() }),
+        hbox({ text(" Temperature Settings ") | bold | color(Color::Yellow), filler() }),
         separator(),
         vbox(std::move(topics_ui)) | size(HEIGHT, EQUAL, 10),
     }) | border;
 }
 
-bool LaserScanDisplay::handle_event(ftxui::Event /*event*/, int /*scroll_offset*/) {
+bool TemperatureDisplay::handle_event(ftxui::Event /*event*/, int /*scroll_offset*/) {
     return false;
 }
 

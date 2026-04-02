@@ -365,22 +365,60 @@ Element Visualizer::render_frame() {
                     text(" STATUS: ") | bold,
                     text(status_msg_) | color(Color::Green),
                 }) | border | size(HEIGHT, EQUAL, 4),
-            }) | size(WIDTH, EQUAL, left_width),
-            canvas(std::move(c)) | center | flex | border,
-            vbox({ 
+                }) | size(WIDTH, EQUAL, left_width),
+                [&] {
+                Elements label_elements;
+                label_elements.push_back(canvas(std::move(c)) | flex);
+
+                for (const auto& label : renderer_.get_labels()) {
+                    int sx, sy; float sz;
+                    if (renderer_.project(label.x, label.y, label.z, sx, sy, sz)) {
+                        // Adjust sx, sy from canvas coordinates to screen coordinates
+                        // This is tricky because project() returns canvas-relative coordinates
+                        // but we need to place the text element.
+                        // Canvas size is sw, sh (target_width*2, target_height*4)
+                        // We can use filler() and hbox/vbox to position.
+                        int tx = sx / 2;
+                        int ty = sy / 4;
+                        if (tx >= 0 && tx < target_width && ty >= 0 && ty < target_height) {
+                            label_elements.push_back(
+                                vbox({
+                                    filler() | size(HEIGHT, EQUAL, ty),
+                                    hbox({
+                                        filler() | size(WIDTH, EQUAL, tx),
+                                        text(label.text) | color(label.color),
+                                        filler()
+                                    }),
+                                    filler()
+                                })
+                            );
+                        }
+                    }
+                }
+                return dbox(std::move(label_elements)) | center | flex | border;
+                }(),
+                vbox({ 
                 (show_topic_modal_ || show_config_modal_ ? (filler() | bgcolor(Color::Black)) : image_panel) | flex, 
                 (show_topic_modal_ || show_config_modal_ ? (filler() | size(HEIGHT, EQUAL, 14) | bgcolor(Color::Black)) : 
                     (config_active ? config_panel : (nav2_active ? nav2_panel : filler()))) 
-            }) | size(WIDTH, EQUAL, right_width),
-        }) | flex
-    });
-
+                }) | size(WIDTH, EQUAL, right_width),
+                }) | flex
+                });
     Element modal_box = filler();
 
     if (show_plugin_modal_) {
         Elements modal_items;
-        for (size_t i = 0; i < displays_.size(); ++i) {
-            bool selected = (static_cast<int>(i) == modal_selected_idx_);
+        int max_visible = 15;
+        int display_count = (int)displays_.size();
+        
+        // Ensure selected index is visible
+        if (modal_selected_idx_ < display_count) {
+            if (modal_selected_idx_ < modal_scroll_) modal_scroll_ = modal_selected_idx_;
+            if (modal_selected_idx_ >= modal_scroll_ + max_visible) modal_scroll_ = modal_selected_idx_ - max_visible + 1;
+        }
+
+        for (int i = modal_scroll_; i < std::min(display_count, modal_scroll_ + max_visible); ++i) {
+            bool selected = (i == modal_selected_idx_);
             bool checked = modal_plugin_states_[i];
             auto t = text((checked ? " [X] " : " [ ] ") + displays_[i]->getName());
             if (selected) t = t | inverted | focus;
@@ -391,20 +429,28 @@ Element Visualizer::render_frame() {
         modal_box = vbox({
             text(" PLUGIN SELECTION ") | bold | hcenter | color(Color::Yellow),
             separator(),
-            vbox(std::move(modal_items)) | vscroll_indicator | frame | size(HEIGHT, LESS_THAN, 15) | border,
+            vbox(std::move(modal_items)) | size(HEIGHT, EQUAL, max_visible) | border,
             hbox({
                 filler(),
-                text(" [ OK ] ") | (modal_selected_idx_ == (int)displays_.size() ? (inverted | color(Color::Green)) : nothing),
-                text(" [ CANCEL ] ") | (modal_selected_idx_ == (int)displays_.size() + 1 ? (inverted | color(Color::Red)) : nothing),
+                text(" [ OK ] ") | (modal_selected_idx_ == display_count ? (inverted | color(Color::Green) | focus) : nothing),
+                text(" [ CANCEL ] ") | (modal_selected_idx_ == display_count + 1 ? (inverted | color(Color::Red) | focus) : nothing),
                 filler(),
             })
         }) | size(WIDTH, GREATER_THAN, 40) | border | bgcolor(Color::Black) | center;
     } else if (show_frame_modal_) {
         show_any_modal = true;
         Elements modal_items;
-        for (size_t i = 0; i < available_frames_.size(); ++i) {
-            bool selected = (static_cast<int>(i) == modal_frame_selected_idx_);
-            bool current = (static_cast<int>(i) == frame_idx_);
+        int max_visible = 15;
+        int frame_count = (int)available_frames_.size();
+
+        if (modal_frame_selected_idx_ < frame_count) {
+            if (modal_frame_selected_idx_ < modal_frame_scroll_) modal_frame_scroll_ = modal_frame_selected_idx_;
+            if (modal_frame_selected_idx_ >= modal_frame_scroll_ + max_visible) modal_frame_scroll_ = modal_frame_selected_idx_ - max_visible + 1;
+        }
+
+        for (int i = modal_frame_scroll_; i < std::min(frame_count, modal_frame_scroll_ + max_visible); ++i) {
+            bool selected = (i == modal_frame_selected_idx_);
+            bool current = (i == frame_idx_);
             auto t = text((current ? " > " : "   ") + available_frames_[i]);
             if (selected) t = t | inverted | focus;
             else if (current) t = t | color(Color::Cyan);
@@ -414,19 +460,27 @@ Element Visualizer::render_frame() {
         modal_box = vbox({
             text(" FIXED FRAME SELECTION ") | bold | hcenter | color(Color::Cyan),
             separator(),
-            vbox(std::move(modal_items)) | vscroll_indicator | frame | size(HEIGHT, LESS_THAN, 15) | border,
+            vbox(std::move(modal_items)) | size(HEIGHT, EQUAL, max_visible) | border,
             hbox({
                 filler(),
-                text(" [ OK ] ") | (modal_frame_selected_idx_ == (int)available_frames_.size() ? (inverted | color(Color::Green)) : nothing),
-                text(" [ CANCEL ] ") | (modal_frame_selected_idx_ == (int)available_frames_.size() + 1 ? (inverted | color(Color::Red)) : nothing),
+                text(" [ OK ] ") | (modal_frame_selected_idx_ == frame_count ? (inverted | color(Color::Green) | focus) : nothing),
+                text(" [ CANCEL ] ") | (modal_frame_selected_idx_ == frame_count + 1 ? (inverted | color(Color::Red) | focus) : nothing),
                 filler(),
             })
         }) | size(WIDTH, GREATER_THAN, 40) | border | bgcolor(Color::Black) | center;
     } else if (show_topic_modal_) {
         show_any_modal = true;
         Elements modal_items;
-        for (size_t i = 0; i < topic_modal_list_.size(); ++i) {
-            bool selected = (static_cast<int>(i) == topic_modal_selected_idx_);
+        int max_visible = 15;
+        int topic_count = (int)topic_modal_list_.size();
+
+        if (topic_modal_selected_idx_ < topic_count) {
+            if (topic_modal_selected_idx_ < topic_modal_scroll_) topic_modal_scroll_ = topic_modal_selected_idx_;
+            if (topic_modal_selected_idx_ >= topic_modal_scroll_ + max_visible) topic_modal_scroll_ = topic_modal_selected_idx_ - max_visible + 1;
+        }
+
+        for (int i = topic_modal_scroll_; i < std::min(topic_count, topic_modal_scroll_ + max_visible); ++i) {
+            bool selected = (i == topic_modal_selected_idx_);
             auto t = text(" " + topic_modal_list_[i]);
             if (selected) t = t | inverted | focus;
             modal_items.push_back(t);
@@ -435,10 +489,10 @@ Element Visualizer::render_frame() {
         modal_box = vbox({
             text(" SELECT TOPIC ") | bold | hcenter | color(Color::Magenta),
             separator(),
-            vbox(std::move(modal_items)) | vscroll_indicator | frame | size(HEIGHT, LESS_THAN, 15) | border,
+            vbox(std::move(modal_items)) | size(HEIGHT, EQUAL, max_visible) | border,
             hbox({
                 filler(),
-                text(" [ CANCEL ] ") | (topic_modal_selected_idx_ == (int)topic_modal_list_.size() ? (inverted | color(Color::Red)) : nothing),
+                text(" [ CANCEL ] ") | (topic_modal_selected_idx_ == topic_count ? (inverted | color(Color::Red) | focus) : nothing),
                 filler(),
             })
         }) | size(WIDTH, EQUAL, 60) | border | bgcolor(Color::Black);
@@ -463,7 +517,8 @@ Element Visualizer::render_frame() {
     } else if (show_config_modal_) {
         auto cfg = config_target_display_->getTopicConfig(config_modal_topic_);
         modal_box = ConfigHelper::render_edit_modal(config_modal_topic_, cfg, 
-                                                   config_modal_selected_idx_, right_width_);
+                                                   config_modal_selected_idx_, right_width_,
+                                                   config_target_display_->getName());
     }
 
     if (!show_blocking_modal) return ftxui::dbox({ main_layout | border, modal_box });
@@ -480,8 +535,12 @@ bool Visualizer::handle_event(Event event) {
     if (show_frame_modal_) {
         if (event.is_mouse()) {
             auto mouse = event.mouse();
-            if (mouse.button == Mouse::WheelUp) { modal_frame_selected_idx_ = std::max(0, modal_frame_selected_idx_ - 1); screen_.PostEvent(Event::Custom); return true; }
-            if (mouse.button == Mouse::WheelDown) { modal_frame_selected_idx_ = std::min((int)available_frames_.size() + 1, modal_frame_selected_idx_ + 1); screen_.PostEvent(Event::Custom); return true; }
+            if (mouse.button == Mouse::WheelUp) { modal_frame_scroll_ = std::max(0, modal_frame_scroll_ - 1); screen_.PostEvent(Event::Custom); return true; }
+            if (mouse.button == Mouse::WheelDown) { 
+                int max_scroll = std::max(0, (int)available_frames_.size() - 15);
+                modal_frame_scroll_ = std::min(max_scroll, modal_frame_scroll_ + 1); 
+                screen_.PostEvent(Event::Custom); return true; 
+            }
             
             auto terminal = ftxui::Terminal::Size();
             int modal_width = 44; 
@@ -494,22 +553,27 @@ bool Visualizer::handle_event(Event event) {
             if (mouse.x >= start_x && mouse.x < start_x + modal_width &&
                 mouse.y >= start_y && mouse.y < start_y + modal_height) {
                 
-                int relative_y = mouse.y - (start_y + 4); 
+                int relative_y = mouse.y - (start_y + 4); // Adjust for outer border, header, separator, and inner border
                 if (relative_y >= 0 && relative_y < items_height) {
-                    if (mouse.button == Mouse::Left && mouse.motion == Mouse::Pressed) {
-                        modal_frame_selected_idx_ = relative_y;
-                        handle_event(Event::Return);
+                    int hovered_idx = relative_y + modal_frame_scroll_;
+                    if (hovered_idx < frame_count) {
+                        modal_frame_selected_idx_ = hovered_idx;
+                        if (mouse.button == Mouse::Left && mouse.motion == Mouse::Pressed) {
+                            handle_event(Event::Return);
+                        }
                     }
+                    screen_.PostEvent(Event::Custom);
                     return true;
                 }
 
                 if (mouse.y == start_y + modal_height - 2) {
+                    int middle = start_x + modal_width / 2;
+                    if (mouse.x < middle) modal_frame_selected_idx_ = frame_count;
+                    else modal_frame_selected_idx_ = frame_count + 1;
                     if (mouse.button == Mouse::Left && mouse.motion == Mouse::Pressed) {
-                        int middle = start_x + modal_width / 2;
-                        if (mouse.x < middle) modal_frame_selected_idx_ = frame_count;
-                        else modal_frame_selected_idx_ = frame_count + 1;
                         handle_event(Event::Return);
                     }
+                    screen_.PostEvent(Event::Custom);
                     return true;
                 }
             }
@@ -536,8 +600,12 @@ bool Visualizer::handle_event(Event event) {
     if (show_plugin_modal_) {
         if (event.is_mouse()) {
             auto mouse = event.mouse();
-            if (mouse.button == Mouse::WheelUp) { modal_selected_idx_ = std::max(0, modal_selected_idx_ - 1); screen_.PostEvent(Event::Custom); return true; }
-            if (mouse.button == Mouse::WheelDown) { modal_selected_idx_ = std::min((int)displays_.size() + 1, modal_selected_idx_ + 1); screen_.PostEvent(Event::Custom); return true; }
+            if (mouse.button == Mouse::WheelUp) { modal_scroll_ = std::max(0, modal_scroll_ - 1); screen_.PostEvent(Event::Custom); return true; }
+            if (mouse.button == Mouse::WheelDown) { 
+                int max_scroll = std::max(0, (int)displays_.size() - 15);
+                modal_scroll_ = std::min(max_scroll, modal_scroll_ + 1); 
+                screen_.PostEvent(Event::Custom); return true; 
+            }
 
             auto terminal = ftxui::Terminal::Size();
             int modal_width = 44; 
@@ -550,23 +618,27 @@ bool Visualizer::handle_event(Event event) {
             if (mouse.x >= start_x && mouse.x < start_x + modal_width &&
                 mouse.y >= start_y && mouse.y < start_y + modal_height) {
                 
-                int relative_y = mouse.y - (start_y + 4); 
+                int relative_y = mouse.y - (start_y + 4); // Adjust for outer border, header, separator, and inner border
                 if (relative_y >= 0 && relative_y < items_height) {
-                    if (mouse.button == Mouse::Left && mouse.motion == Mouse::Pressed) {
-                        modal_selected_idx_ = relative_y;
-                        modal_plugin_states_[modal_selected_idx_] = !modal_plugin_states_[modal_selected_idx_];
-                        screen_.PostEvent(Event::Custom);
+                    int hovered_idx = relative_y + modal_scroll_;
+                    if (hovered_idx < display_count) {
+                        modal_selected_idx_ = hovered_idx;
+                        if (mouse.button == Mouse::Left && mouse.motion == Mouse::Pressed) {
+                            modal_plugin_states_[modal_selected_idx_] = !modal_plugin_states_[modal_selected_idx_];
+                        }
                     }
+                    screen_.PostEvent(Event::Custom);
                     return true;
                 }
 
                 if (mouse.y == start_y + modal_height - 2) {
+                    int middle = start_x + modal_width / 2;
+                    if (mouse.x < middle) modal_selected_idx_ = display_count;
+                    else modal_selected_idx_ = display_count + 1;
                     if (mouse.button == Mouse::Left && mouse.motion == Mouse::Pressed) {
-                        int middle = start_x + modal_width / 2;
-                        if (mouse.x < middle) modal_selected_idx_ = display_count;
-                        else modal_selected_idx_ = display_count + 1;
                         handle_event(Event::Return);
                     }
+                    screen_.PostEvent(Event::Custom);
                     return true;
                 }
             }
@@ -587,12 +659,10 @@ bool Visualizer::handle_event(Event event) {
                         bool was_added = displays_[i]->isAdded();
                         bool now_added = modal_plugin_states_[i];
                         displays_[i]->setAdded(now_added);
-                        // If newly added, also enable it (visible by default)
                         if (!was_added && now_added) displays_[i]->setEnabled(true);
                     }
                 }
                 show_plugin_modal_ = false;
-                // Recalculate plugin_idx_ if current is removed
                 if (plugin_idx_ < 0 || (plugin_idx_ < (int)displays_.size() && !displays_[plugin_idx_]->isAdded())) {
                     plugin_idx_ = -1;
                     for (size_t i = 0; i < displays_.size(); ++i) if (displays_[i]->isAdded()) { plugin_idx_ = (int)i; break; }
@@ -612,8 +682,12 @@ bool Visualizer::handle_event(Event event) {
     if (show_topic_modal_) {
         if (event.is_mouse()) {
             auto mouse = event.mouse();
-            if (mouse.button == Mouse::WheelUp) { topic_modal_selected_idx_ = std::max(0, topic_modal_selected_idx_ - 1); screen_.PostEvent(Event::Custom); return true; }
-            if (mouse.button == Mouse::WheelDown) { topic_modal_selected_idx_ = std::min((int)topic_modal_list_.size(), topic_modal_selected_idx_ + 1); screen_.PostEvent(Event::Custom); return true; }
+            if (mouse.button == Mouse::WheelUp) { topic_modal_scroll_ = std::max(0, topic_modal_scroll_ - 1); screen_.PostEvent(Event::Custom); return true; }
+            if (mouse.button == Mouse::WheelDown) { 
+                int max_scroll = std::max(0, (int)topic_modal_list_.size() - 15);
+                topic_modal_scroll_ = std::min(max_scroll, topic_modal_scroll_ + 1); 
+                screen_.PostEvent(Event::Custom); return true; 
+            }
 
             auto terminal = ftxui::Terminal::Size();
             int modal_width = 60; 
@@ -626,20 +700,25 @@ bool Visualizer::handle_event(Event event) {
             if (mouse.x >= start_x && mouse.x < start_x + modal_width &&
                 mouse.y >= start_y && mouse.y < start_y + modal_height) {
                 
-                int relative_y = mouse.y - (start_y + 4); 
+                int relative_y = mouse.y - (start_y + 4); // Adjust for outer border, header, separator, and inner border
                 if (relative_y >= 0 && relative_y < items_height) {
-                    if (mouse.button == Mouse::Left && mouse.motion == Mouse::Pressed) {
-                        topic_modal_selected_idx_ = relative_y;
-                        handle_event(Event::Return);
+                    int hovered_idx = relative_y + topic_modal_scroll_;
+                    if (hovered_idx < topic_count) {
+                        topic_modal_selected_idx_ = hovered_idx;
+                        if (mouse.button == Mouse::Left && mouse.motion == Mouse::Pressed) {
+                            handle_event(Event::Return);
+                        }
                     }
+                    screen_.PostEvent(Event::Custom);
                     return true;
                 }
 
                 if (mouse.y == start_y + modal_height - 2) {
+                    topic_modal_selected_idx_ = topic_count;
                     if (mouse.button == Mouse::Left && mouse.motion == Mouse::Pressed) {
-                        topic_modal_selected_idx_ = topic_count;
                         handle_event(Event::Return);
                     }
+                    screen_.PostEvent(Event::Custom);
                     return true;
                 }
             }
@@ -671,7 +750,8 @@ bool Visualizer::handle_event(Event event) {
     if (show_config_modal_) {
         auto cfg = config_target_display_->getTopicConfig(config_modal_topic_);
         if (ConfigHelper::handle_edit_event(event, cfg, config_modal_selected_idx_, 
-                                          show_config_modal_, right_width_)) {
+                                          show_config_modal_, right_width_,
+                                          config_target_display_->getName())) {
             config_target_display_->setTopicConfig(config_modal_topic_, cfg);
             screen_.PostEvent(Event::Custom);
             return true;
@@ -712,34 +792,31 @@ bool Visualizer::handle_event(Event event) {
                 if (mouse.button == Mouse::WheelUp)   { plugin_scroll_ = std::max(0, plugin_scroll_ - 1); screen_.PostEvent(Event::Custom); return true; }
                 if (mouse.button == Mouse::WheelDown) { plugin_scroll_++; screen_.PostEvent(Event::Custom); return true; }
                 
-                if (mouse.motion == Mouse::Pressed) {
-                    if (mouse.y == y_cursor + 1) {
-                        if (mouse.button == Mouse::Left) {
-                            show_plugin_modal_ = true;
-                            modal_selected_idx_ = 0;
-                            for (size_t i = 0; i < displays_.size(); ++i) if (i < 64) modal_plugin_states_[i] = displays_[i]->isAdded();
-                        }
-                        screen_.PostEvent(Event::Custom);
-                        return true;
+                if (mouse.y == y_cursor + 1) {
+                    if (mouse.button == Mouse::Left && mouse.motion == Mouse::Pressed) {
+                        show_plugin_modal_ = true;
+                        modal_selected_idx_ = 0;
+                        for (size_t i = 0; i < displays_.size(); ++i) if (i < 64) modal_plugin_states_[i] = displays_[i]->isAdded();
                     }
-                    int list_y = mouse.y - (y_cursor + 3) + plugin_scroll_;
-                    if (list_y >= 0) {
-                        // Find the Nth "Added" plugin
-                        int count = 0;
-                        for (size_t i = 0; i < displays_.size(); ++i) {
-                            if (displays_[i]->isAdded()) {
-                                if (count == list_y) {
-                                    if (mouse.button == Mouse::Left) {
-                                        plugin_idx_ = i;
-                                        discover_topics();
-                                    } else if (mouse.button == Mouse::Right) {
-                                        displays_[i]->setEnabled(!displays_[i]->isEnabled());
-                                    }
-                                    screen_.PostEvent(Event::Custom);
-                                    return true;
+                    screen_.PostEvent(Event::Custom);
+                    return true;
+                }
+                int list_y = mouse.y - (y_cursor + 3) + plugin_scroll_;
+                if (list_y >= 0) {
+                    // Find the Nth "Added" plugin
+                    int count = 0;
+                    for (size_t i = 0; i < displays_.size(); ++i) {
+                        if (displays_[i]->isAdded()) {
+                            if (count == list_y) {
+                                plugin_idx_ = i;
+                                if (mouse.button == Mouse::Right && mouse.motion == Mouse::Pressed) {
+                                    displays_[i]->setEnabled(!displays_[i]->isEnabled());
                                 }
-                                count++;
+                                discover_topics();
+                                screen_.PostEvent(Event::Custom);
+                                return true;
                             }
+                            count++;
                         }
                     }
                 }
@@ -752,15 +829,15 @@ bool Visualizer::handle_event(Event event) {
                 if (mouse.button == Mouse::WheelUp)   { topic_scroll_ = std::max(0, topic_scroll_ - 1); screen_.PostEvent(Event::Custom); return true; }
                 if (mouse.button == Mouse::WheelDown) { topic_scroll_++; screen_.PostEvent(Event::Custom); return true; }
                 
-                if (mouse.motion == Mouse::Pressed) {
-                    int list_y = mouse.y - (y_cursor + 3) + topic_scroll_;
-                    if (list_y >= 0 && list_y < (int)available_topics_.size()) {
-                        topic_idx_ = list_y;
-                        if (plugin_idx_ >= 0) {
-                            auto disp = displays_[plugin_idx_];
-                            std::string type = disp->getMessageType();
-                            std::string target_topic = available_topics_[topic_idx_];
+                int list_y = mouse.y - (y_cursor + 3) + topic_scroll_;
+                if (list_y >= 0 && list_y < (int)available_topics_.size()) {
+                    topic_idx_ = list_y;
+                    if (plugin_idx_ >= 0) {
+                        auto disp = displays_[plugin_idx_];
+                        std::string type = disp->getMessageType();
+                        std::string target_topic = available_topics_[topic_idx_];
 
+                        if (mouse.motion == Mouse::Pressed) {
                             if (type == "TF") {
                                 auto tf_disp = std::dynamic_pointer_cast<TFDisplay>(disp);
                                 if (tf_disp) {
@@ -781,9 +858,10 @@ bool Visualizer::handle_event(Event event) {
                                 if (mouse.button == Mouse::Left || mouse.button == Mouse::Right) {
                                     disp->setTopic(target_topic);
                                 }
-                            }                        }
-                        screen_.PostEvent(Event::Custom);
+                            }
+                        }
                     }
+                    screen_.PostEvent(Event::Custom);
                 }
                 return true;
             }

@@ -1,19 +1,18 @@
 #include "terminal_rviz/displays/marker_display.hpp"
+#include "terminal_rviz/config_helper.hpp"
 #if __has_include(<tf2_geometry_msgs/tf2_geometry_msgs.hpp>)
 #include <tf2_geometry_msgs/tf2_geometry_msgs.hpp>
 #else
 #include <tf2_geometry_msgs/tf2_geometry_msgs.h>
 #endif
-#include <cmath>
 #include <algorithm>
 
 namespace terminal_rviz {
 
 MarkerDisplay::MarkerDisplay(rclcpp::Node::SharedPtr node)
-    : Display("Markers", node) {}
+    : Display("Marker", node) {}
 
-void MarkerDisplay::onInitialize() {
-}
+void MarkerDisplay::onInitialize() {}
 
 void MarkerDisplay::setTopic(const std::string& topic) {
     std::lock_guard<std::mutex> lock(mtx_);
@@ -22,52 +21,36 @@ void MarkerDisplay::setTopic(const std::string& topic) {
         enabled_topics_.erase(it);
         marker_subs_.erase(topic);
         marker_array_subs_.erase(topic);
-        markers_.erase(topic);
+        marker_store_.erase(topic);
         configs_.erase(topic);
         return;
     }
     
     enabled_topics_.push_back(topic);
-    configs_[topic] = TopicConfig();
+    TopicConfig cfg;
+    cfg.color_style = "Topic"; // Default to original marker colors
+    configs_[topic] = cfg;
     
-    try {
-        if (preferred_type_ == "visualization_msgs/msg/MarkerArray") {
-            marker_array_subs_[topic] = node_->create_subscription<visualization_msgs::msg::MarkerArray>(
-                topic, 10, [this, topic](const visualization_msgs::msg::MarkerArray::SharedPtr msg) {
-                    this->markerArrayCallback(msg, topic);
-                });
-        } else {
-            marker_subs_[topic] = node_->create_subscription<visualization_msgs::msg::Marker>(
-                topic, 10, [this, topic](const visualization_msgs::msg::Marker::SharedPtr msg) {
-                    this->markerCallback(msg, topic);
-                });
-        }
-    } catch (...) {
-        enabled_topics_.pop_back();
+    if (preferred_type_ == "visualization_msgs/msg/MarkerArray") {
+        marker_array_subs_[topic] = node_->create_subscription<visualization_msgs::msg::MarkerArray>(
+            topic, 10, [this, topic](const visualization_msgs::msg::MarkerArray::SharedPtr msg) {
+                std::lock_guard<std::mutex> lock(mtx_);
+                for (const auto& marker : msg->markers) {
+                    marker_store_[topic][marker.ns + std::to_string(marker.id)] = marker;
+                }
+            });
+    } else {
+        marker_subs_[topic] = node_->create_subscription<visualization_msgs::msg::Marker>(
+            topic, 10, [this, topic](const visualization_msgs::msg::Marker::SharedPtr msg) {
+                std::lock_guard<std::mutex> lock(mtx_);
+                marker_store_[topic][msg->ns + std::to_string(msg->id)] = *msg;
+            });
     }
 }
 
 bool MarkerDisplay::isTopicEnabled(const std::string& topic) const {
     std::lock_guard<std::mutex> lock(mtx_);
     return std::find(enabled_topics_.begin(), enabled_topics_.end(), topic) != enabled_topics_.end();
-}
-
-void MarkerDisplay::markerCallback(const visualization_msgs::msg::Marker::SharedPtr msg, const std::string& topic) {
-    std::lock_guard<std::mutex> lock(mtx_);
-    std::string key = msg->ns + "_" + std::to_string(msg->id);
-    if (msg->action == visualization_msgs::msg::Marker::DELETE) {
-        markers_[topic].erase(key);
-    } else if (msg->action == visualization_msgs::msg::Marker::DELETEALL) {
-        markers_[topic].clear();
-    } else {
-        markers_[topic][key] = *msg;
-    }
-}
-
-void MarkerDisplay::markerArrayCallback(const visualization_msgs::msg::MarkerArray::SharedPtr msg, const std::string& topic) {
-    for (const auto& m : msg->markers) {
-        markerCallback(std::make_shared<visualization_msgs::msg::Marker>(m), topic);
-    }
 }
 
 TopicConfig MarkerDisplay::getTopicConfig(const std::string& topic) {
@@ -81,7 +64,7 @@ void MarkerDisplay::setTopicConfig(const std::string& topic, const TopicConfig& 
     configs_[topic] = config;
 }
 
-void MarkerDisplay::render(RvizRenderer& renderer, ftxui::Canvas& canvas, const std::string& fixed_frame, std::shared_ptr<tf2_ros::Buffer> tf_buffer) {
+void MarkerDisplay::render(RvizRenderer& renderer, ftxui::Canvas&, const std::string& fixed_frame, std::shared_ptr<tf2_ros::Buffer> tf_buffer) {
     if (!enabled_) return;
 
     std::vector<std::string> topics;
@@ -91,73 +74,64 @@ void MarkerDisplay::render(RvizRenderer& renderer, ftxui::Canvas& canvas, const 
     }
 
     for (const auto& topic : topics) {
-        std::map<std::string, visualization_msgs::msg::Marker> to_render;
+        std::map<std::string, visualization_msgs::msg::Marker> markers;
         TopicConfig cfg;
         {
             std::lock_guard<std::mutex> lock(mtx_);
-            if (markers_.count(topic)) to_render = markers_[topic];
+            if (marker_store_.count(topic)) markers = marker_store_[topic];
             if (configs_.count(topic)) cfg = configs_[topic];
         }
 
-        for (auto const& [k, marker] : to_render) {
-            tf2::Transform m_to_w;
+        for (auto const& [key, marker] : markers) {
+            if (marker.action == visualization_msgs::msg::Marker::DELETE) continue;
+
+            tf2::Transform marker_to_world;
             try {
-                auto t_msg = tf_buffer->lookupTransform(fixed_frame, marker.header.frame_id, tf2::TimePointZero);
-                tf2::fromMsg(t_msg.transform, m_to_w);
+                auto transform_msg = tf_buffer->lookupTransform(fixed_frame, marker.header.frame_id, tf2::TimePointZero);
+                tf2::fromMsg(transform_msg.transform, marker_to_world);
             } catch (...) { continue; }
 
-            ftxui::Color col;
-            if (cfg.color_style == "Flat") col = ftxui::Color::RGB(cfg.r, cfg.g, cfg.b);
-            else col = ftxui::Color::RGB(int(marker.color.r*255), int(marker.color.g*255), int(marker.color.b*255));
+            tf2::Transform marker_pose;
+            tf2::fromMsg(marker.pose, marker_pose);
+            tf2::Transform total_tf = marker_to_world * marker_pose;
+            tf2::Vector3 pos = total_tf.getOrigin();
 
-            tf2::Transform v_to_m;
-            tf2::fromMsg(marker.pose, v_to_m);
-            tf2::Transform v_to_w = m_to_w * v_to_m;
+            uint8_t r_c = 255, g_c = 255, b_c = 255;
+            float alpha = cfg.alpha;
+            if (cfg.color_style == "Topic") {
+                r_c = static_cast<uint8_t>(marker.color.r * 255);
+                g_c = static_cast<uint8_t>(marker.color.g * 255);
+                b_c = static_cast<uint8_t>(marker.color.b * 255);
+                alpha *= marker.color.a;
+            } else if (cfg.color_style == "Flat") {
+                static const uint8_t preset_r[] = {255, 255, 0,   0,   255, 0,   255, 255, 0,   255};
+                static const uint8_t preset_g[] = {255, 0,   255, 0,   255, 255, 0,   127, 255, 127};
+                static const uint8_t preset_b[] = {255, 0,   0,   255, 0,   255, 255, 0,   0,   127};
+                int idx = cfg.color_index % 10;
+                r_c = preset_r[idx]; g_c = preset_g[idx]; b_c = preset_b[idx];
+            }
 
-            auto draw_l = [&](float x1, float y1, float z1, float x2, float y2, float z2) {
-                tf2::Vector3 p1 = v_to_w * tf2::Vector3(x1, y1, z1);
-                tf2::Vector3 p2 = v_to_w * tf2::Vector3(x2, y2, z2);
-                renderer.draw_line(p1.x(), p1.y(), p1.z(), p2.x(), p2.y(), p2.z(), col);
-            };
-
-            float sx = marker.scale.x * 0.5f;
-            float sy = marker.scale.y * 0.5f;
-            float sz = marker.scale.z * 0.5f;
-
-            switch (marker.type) {
-                case visualization_msgs::msg::Marker::CUBE:
-                    draw_l(-sx, -sy, -sz,  sx, -sy, -sz); draw_l( sx, -sy, -sz,  sx,  sy, -sz);
-                    draw_l( sx,  sy, -sz, -sx,  sy, -sz); draw_l(-sx,  sy, -sz, -sx, -sy, -sz);
-                    draw_l(-sx, -sy,  sz,  sx, -sy,  sz); draw_l( sx, -sy,  sz,  sx,  sy,  sz);
-                    draw_l( sx,  sy,  sz, -sx,  sy,  sz); draw_l(-sx,  sy,  sz, -sx, -sy,  sz);
-                    draw_l(-sx, -sy, -sz, -sx, -sy,  sz); draw_l( sx, -sy, -sz,  sx, -sy,  sz);
-                    draw_l( sx,  sy, -sz,  sx,  sy,  sz); draw_l(-sx,  sy, -sz, -sx,  sy,  sz);
-                    break;
-                case visualization_msgs::msg::Marker::SPHERE: {
-                    int steps = 8;
-                    for (int i=0; i<steps; ++i) {
-                        float a1 = 2.0f * M_PI * i / steps;
-                        float a2 = 2.0f * M_PI * (i+1) / steps;
-                        draw_l(sx*cos(a1), sy*sin(a1), 0, sx*cos(a2), sy*sin(a2), 0);
-                        draw_l(sx*cos(a1), 0, sz*sin(a1), sx*cos(a2), 0, sz*sin(a2));
-                        draw_l(0, sy*cos(a1), sz*sin(a1), 0, sy*cos(a2), sz*sin(a2));
-                    }
-                    break;
+            if (marker.type == visualization_msgs::msg::Marker::CUBE) {
+                renderer.draw_box(pos.x(), pos.y(), pos.z(), marker.scale.x, marker.scale.y, marker.scale.z, r_c, g_c, b_c, alpha);
+            } else if (marker.type == visualization_msgs::msg::Marker::SPHERE) {
+                renderer.draw_sphere(pos.x(), pos.y(), pos.z(), marker.scale.x * 0.5f, r_c, g_c, b_c, alpha);
+            } else if (marker.type == visualization_msgs::msg::Marker::CYLINDER) {
+                renderer.draw_sphere(pos.x(), pos.y(), pos.z(), marker.scale.x * 0.5f, r_c, g_c, b_c, alpha);
+            } else if (marker.type == visualization_msgs::msg::Marker::ARROW) {
+                tf2::Vector3 tip = total_tf * tf2::Vector3(marker.scale.x, 0, 0);
+                renderer.draw_arrow(pos.x(), pos.y(), pos.z(), tip.x(), tip.y(), tip.z(), r_c, g_c, b_c, alpha, marker.scale.y);
+            } else if (marker.type == visualization_msgs::msg::Marker::LINE_STRIP || marker.type == visualization_msgs::msg::Marker::LINE_LIST) {
+                for (size_t i = 1; i < marker.points.size(); ++i) {
+                    if (marker.type == visualization_msgs::msg::Marker::LINE_LIST && i % 2 == 0) continue;
+                    tf2::Vector3 p1 = total_tf * tf2::Vector3(marker.points[i-1].x, marker.points[i-1].y, marker.points[i-1].z);
+                    tf2::Vector3 p2 = total_tf * tf2::Vector3(marker.points[i].x, marker.points[i].y, marker.points[i].z);
+                    renderer.draw_line(p1.x(), p1.y(), p1.z(), p2.x(), p2.y(), p2.z(), r_c, g_c, b_c, alpha);
                 }
-                case visualization_msgs::msg::Marker::LINE_STRIP:
-                    for (size_t i=0; i+1 < marker.points.size(); ++i) {
-                        tf2::Vector3 p1 = v_to_w * tf2::Vector3(marker.points[i].x, marker.points[i].y, marker.points[i].z);
-                        tf2::Vector3 p2 = v_to_w * tf2::Vector3(marker.points[i+1].x, marker.points[i+1].y, marker.points[i+1].z);
-                        renderer.draw_line(p1.x(), p1.y(), p1.z(), p2.x(), p2.y(), p2.z(), col);
-                    }
-                    break;
-                case visualization_msgs::msg::Marker::LINE_LIST:
-                    for (size_t i=0; i+1 < marker.points.size(); i+=2) {
-                        tf2::Vector3 p1 = v_to_w * tf2::Vector3(marker.points[i].x, marker.points[i].y, marker.points[i].z);
-                        tf2::Vector3 p2 = v_to_w * tf2::Vector3(marker.points[i+1].x, marker.points[i+1].y, marker.points[i+1].z);
-                        renderer.draw_line(p1.x(), p1.y(), p1.z(), p2.x(), p2.y(), p2.z(), col);
-                    }
-                    break;
+            } else if (marker.type == visualization_msgs::msg::Marker::POINTS) {
+                for (const auto& p : marker.points) {
+                    tf2::Vector3 p_world = total_tf * tf2::Vector3(p.x, p.y, p.z);
+                    renderer.draw_point(p_world.x(), p_world.y(), p_world.z(), r_c, g_c, b_c, alpha);
+                }
             }
         }
     }
@@ -166,55 +140,22 @@ void MarkerDisplay::render(RvizRenderer& renderer, ftxui::Canvas& canvas, const 
 ftxui::Element MarkerDisplay::render_2d(bool /*nav2_active*/, int config_scroll) {
     using namespace ftxui;
     std::lock_guard<std::mutex> lock(mtx_);
-    
     Elements topics_ui;
     int count = 0;
     for (const auto& topic : enabled_topics_) {
-        if (count >= config_scroll && count < config_scroll + 5) { 
-            auto& cfg = configs_[topic];
-            topics_ui.push_back(vbox({
-                hbox({ text(" Topic: ") | bold, text(topic) | color(Color::Green) }),
-                hbox({
-                    text(" Color Style: "),
-                    text(" [" + cfg.color_style + "] ") | color(Color::Cyan),
-                }),
-                separator(),
-            }));
+        if (count >= config_scroll && count < config_scroll + 4) { 
+            topics_ui.push_back(ConfigHelper::render_summary(topic, configs_[topic]));
         }
         count++;
     }
-    
-    if (topics_ui.empty()) {
-        if (enabled_topics_.empty()) return text(" No Marker topics active") | dim | center;
-        return text(" (End of list)") | dim | center;
-    }
-
     return vbox({
-        hbox({ text(" Marker Settings ") | bold | color(Color::Yellow), filler(), text(" [Scroll/Toggle] ") | dim }),
+        hbox({ text(" Marker Settings ") | bold | color(Color::Yellow), filler() }),
         separator(),
         vbox(std::move(topics_ui)) | size(HEIGHT, EQUAL, 10),
     }) | border;
 }
 
-bool MarkerDisplay::handle_event(ftxui::Event event, int scroll_offset) {
-    if (!event.is_mouse()) return false;
-    auto mouse = event.mouse();
-    if (mouse.button != ftxui::Mouse::Left || mouse.motion != ftxui::Mouse::Pressed) return false;
-
-    auto terminal = ftxui::Terminal::Size();
-    int ry = mouse.y - (terminal.dimy - 12); 
-    if (ry < 0 || ry >= 10) return false;
-
-    int item_idx = (ry / 2) + scroll_offset;
-    
-    std::lock_guard<std::mutex> lock(mtx_);
-    if (item_idx >= 0 && item_idx < (int)enabled_topics_.size()) {
-        std::string topic = enabled_topics_[item_idx];
-        auto& cfg = configs_[topic];
-        if (cfg.color_style == "Flat") cfg.color_style = "Original";
-        else cfg.color_style = "Flat";
-        return true;
-    }
+bool MarkerDisplay::handle_event(ftxui::Event /*event*/, int /*scroll_offset*/) {
     return false;
 }
 

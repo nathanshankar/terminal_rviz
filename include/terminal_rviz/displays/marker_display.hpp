@@ -37,7 +37,7 @@ private:
     std::map<std::string, rclcpp::Subscription<visualization_msgs::msg::MarkerArray>::SharedPtr> marker_array_subs_;
 
     mutable std::mutex mtx_;
-    std::map<std::string, std::map<std::string, visualization_msgs::msg::Marker>> markers_;
+    std::map<std::string, std::map<std::string, visualization_msgs::msg::Marker>> marker_store_;
     std::map<std::string, TopicConfig> configs_;
     std::vector<std::string> enabled_topics_;
     std::string preferred_type_ = "visualization_msgs/msg/Marker";

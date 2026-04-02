@@ -14,12 +14,15 @@
 namespace terminal_rviz {
 
 struct TopicConfig {
-    std::string color_style = "Flat"; // Flat, Axis, RGB
+    std::string color_style = "Flat"; // Flat, Axis, RGB, Topic
     float alpha = 1.0f;
     float size = 0.05f;
     uint8_t r = 255, g = 255, b = 255;
-    int color_index = 0; // 0-9 presets
-    std::string axis = "Z"; // X, Y, Z
+    int color_index = 0; 
+    int color_index_2 = 0; 
+    std::string axis = "Z"; 
+    std::string style = "Points"; // Points, Squares, Flat Squares, Spheres, Boxes, Tiles, Map, Costmap
+    int history_length = 10;
 };
 
 class Display {
@@ -28,10 +31,10 @@ public:
     virtual ~Display() = default;
 
     virtual void onInitialize() {}
-    virtual void update(double dt) {}
+    virtual void update(double /*dt*/) {}
     virtual void render(RvizRenderer& renderer, ftxui::Canvas& canvas, const std::string& fixed_frame, std::shared_ptr<tf2_ros::Buffer> tf_buffer) = 0;
-    virtual ftxui::Element render_2d(bool nav2_active = false, int config_scroll = 0) { return ftxui::filler(); }
-    virtual bool handle_event(ftxui::Event event, int scroll_offset = 0) { return false; }
+    virtual ftxui::Element render_2d(bool /*nav2_active*/ = false, int /*config_scroll*/ = 0) { return ftxui::filler(); }
+    virtual bool handle_event(ftxui::Event /*event*/, int /*scroll_offset*/ = 0) { return false; }
 
     void setName(const std::string& name) { name_ = name; }
     bool isEnabled() const { return enabled_; }
@@ -54,6 +57,8 @@ public:
     virtual std::string getMessageType() const = 0;
 
 protected:
+    void render_styled_point(RvizRenderer& renderer, float x, float y, float z, const TopicConfig& cfg, uint8_t r, uint8_t g, uint8_t b);
+
     std::string name_;
     std::string topic_;
     rclcpp::Node::SharedPtr node_;

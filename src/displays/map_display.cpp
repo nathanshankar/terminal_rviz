@@ -1,4 +1,5 @@
 #include "terminal_rviz/displays/map_display.hpp"
+#include "terminal_rviz/config_helper.hpp"
 #if __has_include(<tf2_geometry_msgs/tf2_geometry_msgs.hpp>)
 #include <tf2_geometry_msgs/tf2_geometry_msgs.hpp>
 #else
@@ -11,8 +12,7 @@ namespace terminal_rviz {
 MapDisplay::MapDisplay(rclcpp::Node::SharedPtr node)
     : Display("Map", node) {}
 
-void MapDisplay::onInitialize() {
-}
+void MapDisplay::onInitialize() {}
 
 void MapDisplay::setTopic(const std::string& topic) {
     std::lock_guard<std::mutex> lock(mtx_);
@@ -26,12 +26,16 @@ void MapDisplay::setTopic(const std::string& topic) {
     }
     
     enabled_topics_.push_back(topic);
-    configs_[topic] = TopicConfig();
+    TopicConfig cfg;
+    cfg.style = "Map";
+    cfg.alpha = 0.7f;
+    configs_[topic] = cfg;
     
     try {
         subs_[topic] = node_->create_subscription<nav_msgs::msg::OccupancyGrid>(
             topic, rclcpp::QoS(1).transient_local(), [this, topic](const nav_msgs::msg::OccupancyGrid::SharedPtr msg) {
-                this->callback(msg, topic);
+                std::lock_guard<std::mutex> lock(mtx_);
+                latest_maps_[topic] = msg;
             });
     } catch (...) {
         enabled_topics_.pop_back();
@@ -41,11 +45,6 @@ void MapDisplay::setTopic(const std::string& topic) {
 bool MapDisplay::isTopicEnabled(const std::string& topic) const {
     std::lock_guard<std::mutex> lock(mtx_);
     return std::find(enabled_topics_.begin(), enabled_topics_.end(), topic) != enabled_topics_.end();
-}
-
-void MapDisplay::callback(const nav_msgs::msg::OccupancyGrid::SharedPtr msg, const std::string& topic) {
-    std::lock_guard<std::mutex> lock(mtx_);
-    latest_maps_[topic] = msg;
 }
 
 TopicConfig MapDisplay::getTopicConfig(const std::string& topic) {
@@ -85,7 +84,7 @@ float MapDisplay::getHeight() const {
     return latest_maps_.begin()->second->info.height * latest_maps_.begin()->second->info.resolution;
 }
 
-void MapDisplay::render(RvizRenderer& renderer, ftxui::Canvas& canvas, const std::string& fixed_frame, std::shared_ptr<tf2_ros::Buffer> tf_buffer) {
+void MapDisplay::render(RvizRenderer& renderer, ftxui::Canvas&, const std::string& fixed_frame, std::shared_ptr<tf2_ros::Buffer> tf_buffer) {
     if (!enabled_) return;
 
     std::vector<std::string> topics;
@@ -123,13 +122,13 @@ void MapDisplay::render(RvizRenderer& renderer, ftxui::Canvas& canvas, const std
         tf2::Vector3 br = map_to_world * tf2::Vector3(ox + width * res, oy, 0);
         tf2::Vector3 tr = map_to_world * tf2::Vector3(ox + width * res, oy + height * res, 0);
         tf2::Vector3 tl = map_to_world * tf2::Vector3(ox, oy + height * res, 0);
-        renderer.draw_line(bl.x(), bl.y(), bl.z(), br.x(), br.y(), br.z(), border_col);
-        renderer.draw_line(br.x(), br.y(), br.z(), tr.x(), tr.y(), tr.z(), border_col);
-        renderer.draw_line(tr.x(), tr.y(), tr.z(), tl.x(), tl.y(), tl.z(), border_col);
-        renderer.draw_line(tl.x(), tl.y(), tl.z(), bl.x(), bl.y(), bl.z(), border_col);
+        renderer.draw_line(bl.x(), bl.y(), bl.z(), br.x(), br.y(), br.z(), border_col, cfg.alpha);
+        renderer.draw_line(br.x(), br.y(), br.z(), tr.x(), tr.y(), tr.z(), border_col, cfg.alpha);
+        renderer.draw_line(tr.x(), tr.y(), tr.z(), tl.x(), tl.y(), tl.z(), border_col, cfg.alpha);
+        renderer.draw_line(tl.x(), tl.y(), tl.z(), bl.x(), bl.y(), bl.z(), border_col, cfg.alpha);
 
         uint32_t total = width * height;
-        uint32_t max_pts = 20000; 
+        uint32_t max_pts = 10000; 
         uint32_t skip = std::max(1U, total / max_pts);
 
         for (uint32_t i = 0; i < total; i += skip) {
@@ -138,32 +137,36 @@ void MapDisplay::render(RvizRenderer& renderer, ftxui::Canvas& canvas, const std
 
             uint32_t xi = i % width;
             uint32_t yi = i / width;
-            tf2::Vector3 p_local(ox + xi * res, oy + yi * res, -0.02f); 
+            tf2::Vector3 p_local(ox + xi * res, oy + yi * res, -0.01f); 
             tf2::Vector3 p_world = map_to_world * p_local;
 
-            ftxui::Color col;
-            if (val > 50) col = ftxui::Color::Magenta; 
-            else col = ftxui::Color::White; 
+            uint8_t r_c, g_c, b_c;
+            if (cfg.style == "Costmap") {
+                if (val > 90) { r_c = 255; g_c = 255; b_c = 255; }
+                else if (val > 50) { r_c = 128; g_c = 128; b_c = 128; }
+                else { r_c = 0; g_c = 0; b_c = 0; }
+            } else { // "Map" style
+                if (val > 50) { r_c = 255; g_c = 0; b_c = 255; } // Magenta
+                else { r_c = 255; g_c = 255; b_c = 255; } // White
+            }
 
-            renderer.draw_point(p_world.x(), p_world.y(), p_world.z(), col);
+            renderer.draw_point(p_world.x(), p_world.y(), p_world.z(), r_c, g_c, b_c, cfg.alpha);
         }
     }
 }
 
-ftxui::Element MapDisplay::render_2d(bool /*nav2_active*/, int /*config_scroll*/) {
+ftxui::Element MapDisplay::render_2d(bool /*nav2_active*/, int config_scroll) {
     using namespace ftxui;
     std::lock_guard<std::mutex> lock(mtx_);
-    
     Elements topics_ui;
+    int count = 0;
     for (const auto& topic : enabled_topics_) {
-        topics_ui.push_back(vbox({
-            hbox({ text(" Topic: ") | bold, text(topic) | color(Color::Yellow) }),
-            separator(),
-        }));
+        if (count >= config_scroll && count < config_scroll + 4) { 
+            topics_ui.push_back(ConfigHelper::render_summary(topic, configs_[topic]));
+        }
+        count++;
     }
-    
-    if (topics_ui.empty()) return text(" No Map topics active") | dim | center;
-
+    if (topics_ui.empty()) return text(enabled_topics_.empty() ? " No Map topics active" : " (End of list)") | dim | center;
     return vbox({
         hbox({ text(" Map Settings ") | bold | color(Color::Yellow), filler() }),
         separator(),
@@ -171,7 +174,7 @@ ftxui::Element MapDisplay::render_2d(bool /*nav2_active*/, int /*config_scroll*/
     }) | border;
 }
 
-bool MapDisplay::handle_event(ftxui::Event event, int /*scroll_offset*/) {
+bool MapDisplay::handle_event(ftxui::Event /*event*/, int /*scroll_offset*/) {
     return false;
 }
 

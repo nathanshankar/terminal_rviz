@@ -14,10 +14,9 @@
 namespace terminal_rviz {
 
 PointCloudDisplay::PointCloudDisplay(rclcpp::Node::SharedPtr node)
-    : Display("PointCloud", node) {}
+    : Display("PointCloud2", node) {}
 
 void PointCloudDisplay::onInitialize() {
-    // Start empty - no default subscription
 }
 
 void PointCloudDisplay::setTopic(const std::string& topic) {
@@ -33,6 +32,8 @@ void PointCloudDisplay::setTopic(const std::string& topic) {
     
     enabled_topics_.push_back(topic);
     TopicConfig cfg; 
+    cfg.color_style = "Axis";
+    cfg.axis = "Z";
     cfg.size = 0.0f; 
     cfg.alpha = 1.0f;
     configs_[topic] = cfg;
@@ -68,7 +69,7 @@ void PointCloudDisplay::setTopicConfig(const std::string& topic, const TopicConf
     configs_[topic] = config;
 }
 
-void PointCloudDisplay::render(RvizRenderer& renderer, ftxui::Canvas& canvas, const std::string& fixed_frame, std::shared_ptr<tf2_ros::Buffer> tf_buffer) {
+void PointCloudDisplay::render(RvizRenderer& renderer, ftxui::Canvas& /*canvas*/, const std::string& fixed_frame, std::shared_ptr<tf2_ros::Buffer> tf_buffer) {
     if (!enabled_) return;
 
     std::vector<std::string> topics;
@@ -107,18 +108,6 @@ void PointCloudDisplay::render(RvizRenderer& renderer, ftxui::Canvas& canvas, co
 
         sensor_msgs::PointCloud2ConstIterator<float> iter_x(*msg, "x"), iter_y(*msg, "y"), iter_z(*msg, "z");
         
-        // Use local variable for iter_rgb to avoid scope issues
-        std::unique_ptr<sensor_msgs::PointCloud2ConstIterator<uint8_t>> iter_rgb_ptr;
-        if (has_rgb) {
-            try {
-                iter_rgb_ptr = std::make_unique<sensor_msgs::PointCloud2ConstIterator<uint8_t>>(*msg, "rgb");
-            } catch (...) {
-                try {
-                    iter_rgb_ptr = std::make_unique<sensor_msgs::PointCloud2ConstIterator<uint8_t>>(*msg, "rgba");
-                } catch (...) { has_rgb = false; }
-            }
-        }
-
         size_t total_points = msg->width * msg->height;
         if (total_points == 0) continue;
 
@@ -146,39 +135,44 @@ void PointCloudDisplay::render(RvizRenderer& renderer, ftxui::Canvas& canvas, co
             range_inv = 1.0f / (max_val - min_val);
         }
 
+        // Re-initialize iter_rgb if needed
+        std::unique_ptr<sensor_msgs::PointCloud2ConstIterator<uint8_t>> iter_rgb_ptr;
+        if (has_rgb) {
+            try {
+                iter_rgb_ptr = std::make_unique<sensor_msgs::PointCloud2ConstIterator<uint8_t>>(*msg, "rgb");
+            } catch (...) {
+                try {
+                    iter_rgb_ptr = std::make_unique<sensor_msgs::PointCloud2ConstIterator<uint8_t>>(*msg, "rgba");
+                } catch (...) { has_rgb = false; }
+            }
+        }
+
         for (size_t i = 0; i < total_points; i += skip, iter_x += skip, iter_y += skip, iter_z += skip) {
             tf2::Vector3 p_world = pc_to_world * tf2::Vector3(*iter_x, *iter_y, *iter_z);
-            int sx, sy; float sz;
-            if (renderer.project(p_world.x(), p_world.y(), p_world.z(), sx, sy, sz)) {
-                uint8_t r_c = 255, g_c = 255, b_c = 255;
-                
-                if (cfg.color_style == "RGB" && has_rgb && iter_rgb_ptr) {
-                    auto it_val = (*iter_rgb_ptr) + i;
-                    r_c = it_val[2]; g_c = it_val[1]; b_c = it_val[0];
-                } else if (cfg.color_style == "Flat") {
-                    // Pre-defined high-fidelity preset colors
-                    static const uint8_t preset_r[] = {255, 255, 0,   0,   255, 0,   255, 255, 0,   255};
-                    static const uint8_t preset_g[] = {255, 0,   255, 0,   255, 255, 0,   127, 255, 127};
-                    static const uint8_t preset_b[] = {255, 0,   0,   255, 0,   255, 255, 0,   0,   127};
-                    int idx = cfg.color_index % 10;
-                    r_c = preset_r[idx]; g_c = preset_g[idx]; b_c = preset_b[idx];
-                } else {
-                    float val = (cfg.axis == "Y") ? *iter_y : ((cfg.axis == "Z") ? *iter_z : *iter_x);
-                    float v = std::clamp((val - min_val) * range_inv, 0.0f, 1.0f);
-                    if (v < 0.25f) { r_c = 255; g_c = static_cast<uint8_t>(v * 1020); b_c = 0; }
-                    else if (v < 0.5f) { r_c = static_cast<uint8_t>((0.5f - v) * 1020); g_c = 255; b_c = 0; }
-                    else if (v < 0.75f) { r_c = 0; g_c = 255; b_c = static_cast<uint8_t>((v - 0.5f) * 1020); }
-                    else { r_c = 0; g_c = static_cast<uint8_t>((1.0f - v) * 1020); b_c = 255; }
+            
+            uint8_t r_c = 255, g_c = 255, b_c = 255;
+            
+            if (cfg.color_style == "RGB") {
+                if (has_rgb && iter_rgb_ptr) {
+                    auto current_rgb = (*iter_rgb_ptr) + i;
+                    r_c = current_rgb[2]; g_c = current_rgb[1]; b_c = current_rgb[0];
                 }
-                
-                r_c = static_cast<uint8_t>(r_c * cfg.alpha);
-                g_c = static_cast<uint8_t>(g_c * cfg.alpha);
-                b_c = static_cast<uint8_t>(b_c * cfg.alpha);
-                
-                int r = (int)(cfg.size * 10.0f);
-                if (r <= 0) renderer.plot(sx, sy, sz, ftxui::Color::RGB(r_c, g_c, b_c));
-                else for (int dy = -r; dy <= r; ++dy) for (int dx = -r; dx <= r; ++dx) renderer.plot(sx + dx, sy + dy, sz, ftxui::Color::RGB(r_c, g_c, b_c));
+            } else if (cfg.color_style == "Flat") {
+                static const uint8_t preset_r[] = {255, 255, 0,   0,   255, 0,   255, 255, 0,   255};
+                static const uint8_t preset_g[] = {255, 0,   255, 0,   255, 255, 0,   127, 255, 127};
+                static const uint8_t preset_b[] = {255, 0,   0,   255, 0,   255, 255, 0,   0,   127};
+                int idx = cfg.color_index % 10;
+                r_c = preset_r[idx]; g_c = preset_g[idx]; b_c = preset_b[idx];
+            } else if (cfg.color_style == "Axis") {
+                float val = (cfg.axis == "Y") ? *iter_y : ((cfg.axis == "Z") ? *iter_z : *iter_x);
+                float v = std::clamp((val - min_val) * range_inv, 0.0f, 1.0f);
+                if (v < 0.25f) { r_c = 255; g_c = static_cast<uint8_t>(v * 1020); b_c = 0; }
+                else if (v < 0.5f) { r_c = static_cast<uint8_t>((0.5f - v) * 1020); g_c = 255; b_c = 0; }
+                else if (v < 0.75f) { r_c = 0; g_c = 255; b_c = static_cast<uint8_t>((v - 0.5f) * 1020); }
+                else { r_c = 0; g_c = static_cast<uint8_t>((1.0f - v) * 1020); b_c = 255; }
             }
+
+            render_styled_point(renderer, p_world.x(), p_world.y(), p_world.z(), cfg, r_c, g_c, b_c);
         }
     }
 }
@@ -196,7 +190,7 @@ ftxui::Element PointCloudDisplay::render_2d(bool /*nav2_active*/, int config_scr
     }
     if (topics_ui.empty()) return text(enabled_topics_.empty() ? " No topics active" : " (End of list)") | dim | center;
     return vbox({
-        hbox({ text(" PointCloud Topics ") | bold | color(Color::Yellow), filler() }),
+        hbox({ text(" PointCloud2 Topics ") | bold | color(Color::Yellow), filler() }),
         separator(),
         vbox(std::move(topics_ui)) | size(HEIGHT, EQUAL, 10),
     }) | border;
