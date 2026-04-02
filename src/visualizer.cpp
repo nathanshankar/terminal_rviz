@@ -31,6 +31,7 @@ Visualizer::Visualizer(rclcpp::Node::SharedPtr node)
 }
 
 void Visualizer::add_display(std::shared_ptr<Display> display) {
+    std::lock_guard<std::recursive_mutex> lock(displays_mutex_);
     displays_.push_back(display);
 }
 
@@ -62,8 +63,6 @@ void Visualizer::run() {
             if (mouse.button == Mouse::WheelUp)   { tar_zoom_ = tar_zoom_.load() * 1.1f; return true; }
             if (mouse.button == Mouse::WheelDown) { tar_zoom_ = tar_zoom_.load() / 1.1f; return true; }
 
-            bool is_pressed = (mouse.motion == Mouse::Pressed);
-            bool is_released = (mouse.motion == Mouse::Released);
             bool is_active = (mouse.motion == Mouse::Pressed);
 
             if (mouse.button == Mouse::Left) {
@@ -87,16 +86,19 @@ void Visualizer::run() {
                     }
                 } else if (current_tool_ == Tool::Nav2) {
                     std::shared_ptr<Nav2Display> nav2 = nullptr;
-                    for (auto& d : displays_) if (d->getName() == "Nav2") { nav2 = std::dynamic_pointer_cast<Nav2Display>(d); break; }
+                    {
+                        std::lock_guard<std::recursive_mutex> lock(displays_mutex_);
+                        for (auto& d : displays_) if (d->getName() == "Nav2") { nav2 = std::dynamic_pointer_cast<Nav2Display>(d); break; }
+                    }
                     if (nav2 && nav2->isEnabled()) {
                         int vx = mouse.x - canvas_x_offset_;
                         int vy = mouse.y - canvas_y_offset_;
                         if (vx >= 0 && vy >= 0) {
                             float wx, wy; bool hit = renderer_.pick_ground_plane(vx * 2, vy * 4, wx, wy);
-                            if (is_pressed && hit) {
+                            if (mouse.motion == Mouse::Pressed && hit) {
                                 if (!nav2->is_selecting()) { nav2->set_goal(wx, wy, fixed_frame_); nav2->start_selection(); }
                                 else nav2->update_goal_orientation(wx, wy);
-                            } else if (is_released) {
+                            } else if (mouse.motion == Mouse::Released) {
                                 if (hit) nav2->update_goal_orientation(wx, wy);
                                 nav2->finalize_selection();
                             }
@@ -147,10 +149,80 @@ void Visualizer::discover_frames() {
     if (!available_frames_.empty()) fixed_frame_ = available_frames_[frame_idx_];
 }
 
+void Visualizer::build_topic_tree() {
+    std::lock_guard<std::recursive_mutex> lock(displays_mutex_);
+    modal_topic_entries_.clear();
+    modal_topic_selections_.clear();
+
+    for (size_t i = 0; i < displays_.size(); ++i) {
+        if (displays_[i]->isAdded()) {
+            auto topics = displays_[i]->getEnabledTopics();
+            for (const auto& t : topics) {
+                modal_topic_selections_[{t, (int)i}] = true;
+            }
+        }
+    }
+
+    struct Node {
+        std::string name;
+        std::string full_path;
+        std::map<std::string, std::unique_ptr<Node>> children;
+        std::vector<int> matching_plugins;
+    };
+
+    Node root{"", "", {}, {}};
+
+    auto topic_map = node_->get_topic_names_and_types();
+    for (const auto& [topic_name, types] : topic_map) {
+        for (const auto& type : types) {
+            std::vector<int> matches;
+            for (size_t i = 0; i < displays_.size(); ++i) {
+                if (displays_[i]->getMessageType() == type) {
+                    matches.push_back(i);
+                }
+            }
+
+            if (!matches.empty()) {
+                std::stringstream ss(topic_name);
+                std::string segment;
+                Node* current = &root;
+                std::string path = "";
+                
+                while (std::getline(ss, segment, '/')) {
+                    if (segment.empty()) continue;
+                    path += "/" + segment;
+                    if (current->children.find(segment) == current->children.end()) {
+                        current->children[segment] = std::make_unique<Node>(Node{segment, path, {}, {}});
+                    }
+                    current = current->children[segment].get();
+                }
+                for (int idx : matches) current->matching_plugins.push_back(idx);
+            }
+        }
+    }
+
+    std::function<void(Node*, int)> flatten = [&](Node* n, int indent) {
+        if (!n->name.empty()) {
+            modal_topic_entries_.push_back({n->name, n->full_path, -1, indent, false});
+        }
+        
+        for (auto& [name, child] : n->children) {
+            flatten(child.get(), n->name.empty() ? 0 : indent + 1);
+        }
+
+        for (int p_idx : n->matching_plugins) {
+            modal_topic_entries_.push_back({displays_[p_idx]->getName(), n->full_path, p_idx, indent + 1, true});
+        }
+    };
+
+    flatten(&root, 0);
+}
+
 void Visualizer::discover_topics() {
     auto topic_map = node_->get_topic_names_and_types();
     std::vector<std::string> topics;
     
+    std::lock_guard<std::recursive_mutex> lock(displays_mutex_);
     if (plugin_idx_ >= 0 && plugin_idx_ < (int)displays_.size()) {
         auto disp = displays_[plugin_idx_];
         std::string target_type = disp->getMessageType();
@@ -182,28 +254,33 @@ Element Visualizer::render_frame() {
     Element image_panel = filler(), nav2_panel = filler(), config_panel = filler();
     bool nav2_active = false;
 
-    // 1. Pre-calculate active status for global layout
-    for (auto& d : displays_) {
-        if (d->getName() == "Nav2" && d->isAdded() && d->isEnabled()) nav2_active = true;
+    {
+        std::lock_guard<std::recursive_mutex> lock(displays_mutex_);
+        for (auto& d : displays_) {
+            if (d->getName() == "Nav2" && d->isAdded() && d->isEnabled()) nav2_active = true;
+        }
     }
 
     bool show_blocking_modal = show_plugin_modal_ || show_frame_modal_;
     bool show_any_modal = show_blocking_modal || show_topic_modal_ || show_config_modal_;
 
-    // 2. Identify what content to show on the right
     bool has_right_content = false;
-    for (auto& display : displays_) {
-        if (!display->isAdded() || !display->isEnabled()) continue;
-        if (display->getName() == "Image") {
-            auto img_disp = std::dynamic_pointer_cast<ImageDisplay>(display);
-            if (img_disp && img_disp->getEnabledTopicCount() > 0) { 
-                has_right_content = true;
-                if (!show_any_modal) image_panel = img_disp->render_2d(nav2_active);
+    {
+        std::lock_guard<std::recursive_mutex> lock(displays_mutex_);
+        for (auto& display : displays_) {
+            if (!display->isAdded() || !display->isEnabled()) continue;
+            if (display->getName() == "Image") {
+                auto img_disp = std::dynamic_pointer_cast<ImageDisplay>(display);
+                if (img_disp && img_disp->getEnabledTopicCount() > 0) { 
+                    has_right_content = true;
+                    if (!show_any_modal) image_panel = img_disp->render_2d(nav2_active);
+                }
             }
         }
     }
     if (nav2_active) {
         has_right_content = true;
+        std::lock_guard<std::recursive_mutex> lock(displays_mutex_);
         for (auto& d : displays_) {
             if (d->getName() == "Nav2") {
                 if (!show_any_modal) nav2_panel = d->render_2d();
@@ -212,15 +289,17 @@ Element Visualizer::render_frame() {
         }
     }
 
-    // Add configuration panel for selected plugin if it's not Image or Nav2
     bool config_active = false;
-    if (plugin_idx_ >= 0 && plugin_idx_ < (int)displays_.size()) {
-        auto disp = displays_[plugin_idx_];
-        if (disp->getName() != "Image" && disp->getName() != "Nav2" && disp->isAdded() && disp->isEnabled()) {
-            has_right_content = true;
-            if (!show_any_modal) {
-                config_panel = disp->render_2d(nav2_active, config_scroll_);
-                config_active = true;
+    {
+        std::lock_guard<std::recursive_mutex> lock(displays_mutex_);
+        if (plugin_idx_ >= 0 && plugin_idx_ < (int)displays_.size()) {
+            auto disp = displays_[plugin_idx_];
+            if (disp->getName() != "Image" && disp->getName() != "Nav2" && disp->isAdded() && disp->isEnabled()) {
+                has_right_content = true;
+                if (!show_any_modal) {
+                    config_panel = disp->render_2d(nav2_active, config_scroll_);
+                    config_active = true;
+                }
             }
         }
     }
@@ -235,7 +314,6 @@ Element Visualizer::render_frame() {
     
     auto c = Canvas(sw, sh);
     
-    // --- Smooth Animation ---
     const float alpha = 0.2f;
     cur_yaw_   += (tar_yaw_.load() - cur_yaw_) * alpha;
     cur_pitch_ += (tar_pitch_.load() - cur_pitch_) * alpha;
@@ -252,6 +330,7 @@ Element Visualizer::render_frame() {
     if (!show_blocking_modal) {
         renderer_.clear();
         if (grid_display_) grid_display_->render(renderer_, c, fixed_frame_, tf_buffer_);
+        std::lock_guard<std::recursive_mutex> lock(displays_mutex_);
         for (auto& display : displays_) {
             if (display->isAdded() && display->isEnabled()) {
                 display->render(renderer_, c, fixed_frame_, tf_buffer_);
@@ -260,33 +339,33 @@ Element Visualizer::render_frame() {
         renderer_.finish(c);
     }
 
-    // Update dynamic offsets for mouse picking
     canvas_x_offset_ = left_width + 2;
     canvas_y_offset_ = 4;
 
     Elements display_list;
     int visible_plugin_count = 0;
-    std::vector<int> sidebar_to_display_idx;
-    for (size_t i = 0; i < displays_.size(); ++i) {
-        if (!displays_[i]->isAdded()) continue;
-        
-        if (visible_plugin_count >= plugin_scroll_ && visible_plugin_count < plugin_scroll_ + 8) {
-            bool selected = (static_cast<int>(i) == plugin_idx_);
-            bool hovered = (static_cast<int>(i) == sidebar_hover_idx_);
-            bool enabled = displays_[i]->isEnabled();
-            auto t = text(" " + displays_[i]->getName());
+    {
+        std::lock_guard<std::recursive_mutex> lock(displays_mutex_);
+        for (size_t i = 0; i < displays_.size(); ++i) {
+            if (!displays_[i]->isAdded()) continue;
             
-            if (selected) {
-                t = t | inverted | color(enabled ? Color::Yellow : Color::RedLight) | focus;
-            } else if (hovered) {
-                t = t | color(enabled ? Color::Green : Color::Red) | bgcolor(Color::GrayDark);
-            } else {
-                t = t | color(enabled ? Color::Green : Color::Red);
+            if (visible_plugin_count >= plugin_scroll_ && visible_plugin_count < plugin_scroll_ + 8) {
+                bool selected = (static_cast<int>(i) == plugin_idx_);
+                bool hovered = (static_cast<int>(i) == sidebar_hover_idx_);
+                bool enabled = displays_[i]->isEnabled();
+                auto t = text(" " + displays_[i]->getName());
+                
+                if (selected) {
+                    t = t | inverted | color(enabled ? Color::Yellow : Color::RedLight) | focus;
+                } else if (hovered) {
+                    t = t | color(enabled ? Color::Green : Color::Red) | bgcolor(Color::GrayDark);
+                } else {
+                    t = t | color(enabled ? Color::Green : Color::Red);
+                }
+                display_list.push_back(t);
             }
-            display_list.push_back(t);
+            visible_plugin_count++;
         }
-        sidebar_to_display_idx.push_back(i);
-        visible_plugin_count++;
     }
     if (display_list.empty()) {
         display_list.push_back(text(" No plugins added") | dim);
@@ -295,47 +374,49 @@ Element Visualizer::render_frame() {
 
     Elements topic_list;
     int visible_topic_count = 0;
-    if (plugin_idx_ >= 0 && plugin_idx_ < (int)displays_.size()) {
-        auto disp = displays_[plugin_idx_];
-        std::string type = disp->getMessageType();
-        if (type == "None") topic_list.push_back(text("No settings") | dim);
-        else {
-            std::string label = (type == "TF") ? "Frames [T/Y]:" : ("Type: " + type);
-            topic_list.push_back(text(label) | dim | size(WIDTH, LESS_THAN, 25));
-            topic_list.push_back(separator());
-            
-            // Limit visible topics based on height
-            int max_visible_topics = std::max(5, target_height - 25); 
+    {
+        std::lock_guard<std::recursive_mutex> lock(displays_mutex_);
+        if (plugin_idx_ >= 0 && plugin_idx_ < (int)displays_.size()) {
+            auto disp = displays_[plugin_idx_];
+            std::string type = disp->getMessageType();
+            if (type == "None") topic_list.push_back(text("No settings") | dim);
+            else {
+                std::string label = (type == "TF") ? "Frames [T/Y]:" : ("Type: " + type);
+                topic_list.push_back(text(label) | dim | size(WIDTH, LESS_THAN, 25));
+                topic_list.push_back(separator());
+                
+                int max_visible_topics = std::max(5, target_height - 25); 
 
-            for (size_t i = 0; i < available_topics_.size(); ++i) {
-                if (visible_topic_count >= topic_scroll_ && visible_topic_count < topic_scroll_ + max_visible_topics) {
-                    bool is_selected = (static_cast<int>(i) == topic_idx_);
-                    auto name = available_topics_[i];
-                    if (type == "TF") {
-                        auto tf_disp = std::dynamic_pointer_cast<TFDisplay>(disp);
-                        bool enabled = tf_disp && tf_disp->isFrameEnabled(name);
-                        auto t = text((enabled ? "[X] " : "[ ] ") + name);
-                        topic_list.push_back(is_selected ? (t | inverted | color(Color::Magenta) | focus) : t);
-                    } else if (type == "sensor_msgs/msg/Image") {
-                        auto img_disp = std::dynamic_pointer_cast<ImageDisplay>(disp);
-                        bool enabled = img_disp && img_disp->isTopicEnabled(name);
-                        auto t = text(" " + name);
-                        if (enabled) t = t | color(Color::Green);
-                        else t = t | color(Color::Red);
-                        if (is_selected) t = t | inverted | focus;
-                        topic_list.push_back(t);
-                    } else {
-                        bool enabled = disp->isTopicEnabled(name);
-                        auto t = text(" " + name);
-                        if (enabled) t = t | color(Color::Green);
-                        else t = t | color(Color::Red);
-                        if (is_selected) t = t | inverted | focus;
-                        topic_list.push_back(t);
-                    }                }
-                visible_topic_count++;
+                for (size_t i = 0; i < available_topics_.size(); ++i) {
+                    if (visible_topic_count >= topic_scroll_ && visible_topic_count < topic_scroll_ + max_visible_topics) {
+                        bool is_selected = (static_cast<int>(i) == topic_idx_);
+                        auto name = available_topics_[i];
+                        if (type == "TF") {
+                            auto tf_disp = std::dynamic_pointer_cast<TFDisplay>(disp);
+                            bool enabled = tf_disp && tf_disp->isFrameEnabled(name);
+                            auto t = text((enabled ? "[X] " : "[ ] ") + name);
+                            topic_list.push_back(is_selected ? (t | inverted | color(Color::Magenta) | focus) : t);
+                        } else if (type == "sensor_msgs/msg/Image") {
+                            auto img_disp = std::dynamic_pointer_cast<ImageDisplay>(disp);
+                            bool enabled = img_disp && img_disp->isTopicEnabled(name);
+                            auto t = text(" " + name);
+                            if (enabled) t = t | color(Color::Green);
+                            else t = t | color(Color::Red);
+                            if (is_selected) t = t | inverted | focus;
+                            topic_list.push_back(t);
+                        } else {
+                            bool enabled = disp->isTopicEnabled(name);
+                            auto t = text(" " + name);
+                            if (enabled) t = t | color(Color::Green);
+                            else t = t | color(Color::Red);
+                            if (is_selected) t = t | inverted | focus;
+                            topic_list.push_back(t);
+                        }                }
+                    visible_topic_count++;
+                }
             }
-        }
-    } else topic_list.push_back(text("Select a plugin (Tab)") | dim);
+        } else topic_list.push_back(text("Select a plugin (Tab)") | dim);
+    }
 
     auto main_layout = vbox({
         hbox({
@@ -376,11 +457,6 @@ Element Visualizer::render_frame() {
                 for (const auto& label : renderer_.get_labels()) {
                     int sx, sy; float sz;
                     if (renderer_.project(label.x, label.y, label.z, sx, sy, sz)) {
-                        // Adjust sx, sy from canvas coordinates to screen coordinates
-                        // This is tricky because project() returns canvas-relative coordinates
-                        // but we need to place the text element.
-                        // Canvas size is sw, sh (target_width*2, target_height*4)
-                        // We can use filler() and hbox/vbox to position.
                         int tx = sx / 2;
                         int ty = sy / 4;
                         if (tx >= 0 && tx < target_width && ty >= 0 && ty < target_height) {
@@ -412,36 +488,68 @@ Element Visualizer::render_frame() {
     if (show_plugin_modal_) {
         Elements modal_items;
         int max_visible = 15;
+        int max_h = 15;
         
         std::vector<int> filtered_indices;
-        for (size_t i = 0; i < displays_.size(); ++i) {
-            bool is_panel = (displays_[i]->getName() == "Nav2");
-            if (modal_tab_idx_ == 0 && !is_panel) filtered_indices.push_back(i);
-            else if (modal_tab_idx_ == 1 && is_panel) filtered_indices.push_back(i);
+        {
+            std::lock_guard<std::recursive_mutex> lock(displays_mutex_);
+            for (size_t i = 0; i < displays_.size(); ++i) {
+                bool is_panel = (displays_[i]->getName() == "Nav2");
+                if (modal_tab_idx_ == 0 && !is_panel) filtered_indices.push_back(i);
+                else if (modal_tab_idx_ == 1 && is_panel) filtered_indices.push_back(i);
+            }
         }
 
         int display_count = (int)filtered_indices.size();
         
-        // Ensure selected index is visible
-        if (modal_selected_idx_ < display_count) {
-            if (modal_selected_idx_ < modal_scroll_) modal_scroll_ = modal_selected_idx_;
-            if (modal_selected_idx_ >= modal_scroll_ + max_visible) modal_scroll_ = modal_selected_idx_ - max_visible + 1;
-        }
+        if (modal_tab_idx_ == 2) {
+            display_count = (int)modal_topic_entries_.size();
+            if (modal_selected_idx_ < display_count) {
+                if (modal_selected_idx_ < modal_scroll_) modal_scroll_ = modal_selected_idx_;
+                if (modal_selected_idx_ >= modal_scroll_ + max_visible) modal_scroll_ = modal_selected_idx_ - max_visible + 1;
+            }
 
-        for (int i = modal_scroll_; i < std::min(display_count, modal_scroll_ + max_visible); ++i) {
-            int original_idx = filtered_indices[i];
-            bool selected = (i == modal_selected_idx_);
-            bool checked = modal_plugin_states_[original_idx];
-            auto t = text((checked ? " [X] " : " [ ] ") + displays_[original_idx]->getName());
-            if (selected) t = t | inverted | focus;
-            else t = t | color(checked ? Color::Green : Color::GrayDark);
-            modal_items.push_back(t);
+            for (int i = modal_scroll_; i < std::min(display_count, modal_scroll_ + max_visible); ++i) {
+                const auto& entry = modal_topic_entries_[i];
+                std::string indent_str = "";
+                for(int s=0; s<entry.indent; ++s) indent_str += "  ";
+                
+                std::string prefix = entry.is_plugin_type ? "" : "> ";
+                std::string label = indent_str + prefix + entry.label;
+                if (entry.is_plugin_type) {
+                    bool checked = modal_topic_selections_[{entry.topic, entry.display_idx}];
+                    label = indent_str + (checked ? "[X] " : "[ ] ") + entry.label;
+                }
+
+                auto t = text(label);
+                if (i == modal_selected_idx_) t = t | inverted | focus;
+                else t = t | color(entry.is_plugin_type ? Color::Cyan : Color::White);
+                modal_items.push_back(t);
+            }
+        } else {
+            if (modal_selected_idx_ < display_count) {
+                if (modal_selected_idx_ < modal_scroll_) modal_scroll_ = modal_selected_idx_;
+                if (modal_selected_idx_ >= modal_scroll_ + max_visible) modal_scroll_ = modal_selected_idx_ - max_visible + 1;
+            }
+
+            std::lock_guard<std::recursive_mutex> lock(displays_mutex_);
+            for (int i = modal_scroll_; i < std::min(display_count, modal_scroll_ + max_visible); ++i) {
+                int original_idx = filtered_indices[i];
+                bool selected = (i == modal_selected_idx_);
+                bool checked = modal_plugin_states_[original_idx];
+                auto t = text((checked ? " [X] " : " [ ] ") + displays_[original_idx]->getName());
+                if (selected) t = t | inverted | focus;
+                else t = t | color(checked ? Color::Green : Color::GrayDark);
+                modal_items.push_back(t);
+            }
         }
 
         auto tab_plugin = text(" PLUGINS ");
         auto tab_panel = text("  PANELS ");
+        auto tab_topic = text("  TOPICS ");
         if (modal_tab_idx_ == 0) tab_plugin = tab_plugin | inverted | color(Color::Yellow) | bold;
-        else tab_panel = tab_panel | inverted | color(Color::Yellow) | bold;
+        else if (modal_tab_idx_ == 1) tab_panel = tab_panel | inverted | color(Color::Yellow) | bold;
+        else tab_topic = tab_topic | inverted | color(Color::Yellow) | bold;
 
         modal_box = vbox({
             text(" ADD DISPLAY ") | bold | hcenter | color(Color::Yellow),
@@ -450,13 +558,15 @@ Element Visualizer::render_frame() {
                 tab_plugin,
                 separator(),
                 tab_panel,
+                separator(),
+                tab_topic,
                 filler(),
             }) | border,
-            vbox(std::move(modal_items)) | size(HEIGHT, EQUAL, max_visible) | border,
+            vbox(std::move(modal_items)) | size(HEIGHT, EQUAL, max_h) | border,
             hbox({
                 filler(),
-                text(" [ OK ] ") | (modal_selected_idx_ == display_count ? (inverted | color(Color::Green) | focus) : nothing),
-                text(" [ CANCEL ] ") | (modal_selected_idx_ == display_count + 1 ? (inverted | color(Color::Red) | focus) : nothing),
+                text(" [ OK ] ") | (modal_tab_idx_ < 2 && modal_selected_idx_ == display_count ? (inverted | color(Color::Green) | focus) : nothing),
+                text(" [ CANCEL ] ") | (modal_selected_idx_ == (modal_tab_idx_ == 2 ? (int)modal_topic_entries_.size() : display_count) + 1 ? (inverted | color(Color::Red) | focus) : nothing),
                 filler(),
             })
         }) | size(WIDTH, EQUAL, 50) | border | bgcolor(Color::Black) | center;
@@ -520,7 +630,6 @@ Element Visualizer::render_frame() {
             })
         }) | size(WIDTH, EQUAL, 60) | border | bgcolor(Color::Black);
 
-        // Position modal centered on the click slot
         int modal_w = 60;
         int items_h = std::min(15, (int)topic_modal_list_.size());
         int modal_h = items_h + 7;
@@ -538,6 +647,7 @@ Element Visualizer::render_frame() {
             filler(),
         });
     } else if (show_config_modal_) {
+        std::lock_guard<std::recursive_mutex> lock(displays_mutex_);
         auto cfg = config_target_display_->getTopicConfig(config_modal_topic_);
         modal_box = ConfigHelper::render_edit_modal(config_modal_topic_, cfg, 
                                                    config_modal_selected_idx_, right_width_,
@@ -576,7 +686,7 @@ bool Visualizer::handle_event(Event event, int mouse_dx) {
             if (mouse.x >= start_x && mouse.x < start_x + modal_width &&
                 mouse.y >= start_y && mouse.y < start_y + modal_height) {
                 
-                int relative_y = mouse.y - (start_y + 4); // Adjust for outer border, header, separator, and inner border
+                int relative_y = mouse.y - (start_y + 4); 
                 if (relative_y >= 0 && relative_y < items_height) {
                     int hovered_idx = relative_y + modal_frame_scroll_;
                     if (hovered_idx < frame_count) {
@@ -622,12 +732,16 @@ bool Visualizer::handle_event(Event event, int mouse_dx) {
 
     if (show_plugin_modal_) {
         std::vector<int> filtered_indices;
-        for (size_t i = 0; i < displays_.size(); ++i) {
-            bool is_panel = (displays_[i]->getName() == "Nav2");
-            if (modal_tab_idx_ == 0 && !is_panel) filtered_indices.push_back(i);
-            else if (modal_tab_idx_ == 1 && is_panel) filtered_indices.push_back(i);
+        {
+            std::lock_guard<std::recursive_mutex> lock(displays_mutex_);
+            for (size_t i = 0; i < displays_.size(); ++i) {
+                bool is_panel = (displays_[i]->getName() == "Nav2");
+                if (modal_tab_idx_ == 0 && !is_panel) filtered_indices.push_back(i);
+                else if (modal_tab_idx_ == 1 && is_panel) filtered_indices.push_back(i);
+            }
         }
         int display_count = (int)filtered_indices.size();
+        if (modal_tab_idx_ == 2) display_count = (int)modal_topic_entries_.size();
 
         if (event.is_mouse()) {
             auto mouse = event.mouse();
@@ -640,29 +754,50 @@ bool Visualizer::handle_event(Event event, int mouse_dx) {
 
             auto terminal = ftxui::Terminal::Size();
             int modal_width = 50; 
-            int max_h = 15; // Fixed height for layout math
+            int max_h = 15; 
             int start_x = (terminal.dimx - modal_width) / 2;
             int start_y = (terminal.dimy - (max_h + 10)) / 2;
 
             if (mouse.x >= start_x && mouse.x < start_x + modal_width) {
-                // 1. Tabs check
                 if (mouse.y == start_y + 3) {
                     if (mouse.button == Mouse::Left && mouse.motion == Mouse::Pressed) {
-                        int middle = start_x + modal_width / 2;
-                        if (mouse.x < middle) { if (modal_tab_idx_ != 0) { modal_tab_idx_ = 0; modal_selected_idx_ = 0; modal_scroll_ = 0; } }
-                        else { if (modal_tab_idx_ != 1) { modal_tab_idx_ = 1; modal_selected_idx_ = 0; modal_scroll_ = 0; } }
+                        int w = modal_width / 3;
+                        if (mouse.x < start_x + w) { if (modal_tab_idx_ != 0) { modal_tab_idx_ = 0; modal_selected_idx_ = 0; modal_scroll_ = 0; } }
+                        else if (mouse.x < start_x + 2*w) { if (modal_tab_idx_ != 1) { modal_tab_idx_ = 1; modal_selected_idx_ = 0; modal_scroll_ = 0; } }
+                        else { if (modal_tab_idx_ != 2) { modal_tab_idx_ = 2; modal_selected_idx_ = 0; modal_scroll_ = 0; build_topic_tree(); } }
                     }
                     screen_.PostEvent(Event::Custom);
                     return true;
                 }
 
-                // 2. List items check
                 int relative_y = mouse.y - (start_y + 6); 
                 if (relative_y >= 0 && relative_y < max_h) {
                     int hovered_idx = relative_y + modal_scroll_;
-                    if (hovered_idx < display_count) {
-                        modal_selected_idx_ = hovered_idx; // Update index for hover highlight
+                    if (modal_tab_idx_ == 2) {
+                        if (hovered_idx < (int)modal_topic_entries_.size()) {
+                            modal_selected_idx_ = hovered_idx;
+                            if (mouse.button == Mouse::Left && mouse.motion == Mouse::Pressed) {
+                                const auto& entry = modal_topic_entries_[modal_selected_idx_];
+                                if (entry.is_plugin_type && entry.display_idx >= 0) {
+                                    bool can_select = true;
+                                    {
+                                        std::lock_guard<std::recursive_mutex> lock(displays_mutex_);
+                                        if (displays_[entry.display_idx]->getName() == "Image") {
+                                            int count = 0;
+                                            for (auto const& [key, selected] : modal_topic_selections_) {
+                                                if (selected && displays_[key.second]->getName() == "Image") count++;
+                                            }
+                                            if (count >= 2 && !modal_topic_selections_[{entry.topic, entry.display_idx}]) can_select = false;
+                                        }
+                                    }
+                                    if (can_select) modal_topic_selections_[{entry.topic, entry.display_idx}] = !modal_topic_selections_[{entry.topic, entry.display_idx}];
+                                }
+                            }
+                        }
+                    } else if (hovered_idx < display_count) {
+                        modal_selected_idx_ = hovered_idx; 
                         if (mouse.button == Mouse::Left && mouse.motion == Mouse::Pressed) {
+                            std::lock_guard<std::recursive_mutex> lock(displays_mutex_);
                             int original_idx = filtered_indices[modal_selected_idx_];
                             modal_plugin_states_[original_idx] = !modal_plugin_states_[original_idx];
                         }
@@ -671,11 +806,11 @@ bool Visualizer::handle_event(Event event, int mouse_dx) {
                     return true;
                 }
 
-                // 3. Buttons check (bottom line relative to fixed height)
                 if (mouse.y == start_y + max_h + 7) {
                     int middle = start_x + modal_width / 2;
-                    if (mouse.x < middle) modal_selected_idx_ = display_count;
-                    else modal_selected_idx_ = display_count + 1;
+                    int final_count = (modal_tab_idx_ == 2) ? (int)modal_topic_entries_.size() : display_count;
+                    if (mouse.x < middle) modal_selected_idx_ = final_count;
+                    else modal_selected_idx_ = final_count + 1;
 
                     if (mouse.button == Mouse::Left && mouse.motion == Mouse::Pressed) {
                         handle_event(Event::Return);
@@ -689,34 +824,101 @@ bool Visualizer::handle_event(Event event, int mouse_dx) {
         if (event == Event::ArrowUp) { modal_selected_idx_ = std::max(0, modal_selected_idx_ - 1); return true; }
         if (event == Event::ArrowDown) { modal_selected_idx_ = std::min(display_count + 1, modal_selected_idx_ + 1); return true; }
         if (event == Event::ArrowLeft) { if (modal_tab_idx_ != 0) { modal_tab_idx_ = 0; modal_selected_idx_ = 0; modal_scroll_ = 0; } return true; }
-        if (event == Event::ArrowRight) { if (modal_tab_idx_ != 1) { modal_tab_idx_ = 1; modal_selected_idx_ = 0; modal_scroll_ = 0; } return true; }
+        if (event == Event::ArrowRight) { if (modal_tab_idx_ != 1) { modal_tab_idx_ = 1; modal_selected_idx_ = 0; modal_scroll_ = 0; } else if (modal_tab_idx_ == 1) { modal_tab_idx_ = 2; modal_selected_idx_ = 0; modal_scroll_ = 0; build_topic_tree(); } return true; }
         
         if (event == Event::Character(' ')) {
-            if (modal_selected_idx_ < display_count) {
+            if (modal_tab_idx_ == 2) {
+                if (modal_selected_idx_ < (int)modal_topic_entries_.size()) {
+                    const auto& entry = modal_topic_entries_[modal_selected_idx_];
+                    if (entry.is_plugin_type && entry.display_idx >= 0) {
+                        bool can_select = true;
+                        {
+                            std::lock_guard<std::recursive_mutex> lock(displays_mutex_);
+                            if (displays_[entry.display_idx]->getName() == "Image") {
+                                int count = 0;
+                                for (auto const& [key, selected] : modal_topic_selections_) {
+                                    if (selected && displays_[key.second]->getName() == "Image") count++;
+                                }
+                                if (count >= 2 && !modal_topic_selections_[{entry.topic, entry.display_idx}]) can_select = false;
+                            }
+                        }
+                        if (can_select) modal_topic_selections_[{entry.topic, entry.display_idx}] = !modal_topic_selections_[{entry.topic, entry.display_idx}];
+                    }
+                }
+            } else if (modal_selected_idx_ < display_count) {
+                std::lock_guard<std::recursive_mutex> lock(displays_mutex_);
                 int original_idx = filtered_indices[modal_selected_idx_];
                 modal_plugin_states_[original_idx] = !modal_plugin_states_[original_idx];
             }
             return true;
         }
         if (event == Event::Return) {
-            if (modal_selected_idx_ == display_count) { // OK
-                for (size_t i = 0; i < displays_.size(); ++i) {
-                    if (i < 64) {
-                        bool was_added = displays_[i]->isAdded();
-                        bool now_added = modal_plugin_states_[i];
-                        displays_[i]->setAdded(now_added);
-                        if (!was_added && now_added) displays_[i]->setEnabled(true);
+            if (modal_selected_idx_ == display_count && modal_tab_idx_ < 2) { // OK Plugins/Panels
+                {
+                    std::lock_guard<std::recursive_mutex> lock(displays_mutex_);
+                    for (size_t i = 0; i < displays_.size(); ++i) {
+                        if (i < 64) {
+                            bool was_added = displays_[i]->isAdded();
+                            bool now_added = modal_plugin_states_[i];
+                            displays_[i]->setAdded(now_added);
+                            if (!was_added && now_added) displays_[i]->setEnabled(true);
+                        }
                     }
                 }
                 show_plugin_modal_ = false;
                 if (plugin_idx_ < 0 || (plugin_idx_ < (int)displays_.size() && !displays_[plugin_idx_]->isAdded())) {
                     plugin_idx_ = -1;
+                    std::lock_guard<std::recursive_mutex> lock(displays_mutex_);
                     for (size_t i = 0; i < displays_.size(); ++i) if (displays_[i]->isAdded()) { plugin_idx_ = (int)i; break; }
                 }
                 discover_topics();
-            } else if (modal_selected_idx_ == display_count + 1) { // Cancel
+            } else if (modal_tab_idx_ == 2 && modal_selected_idx_ == (int)modal_topic_entries_.size()) { // OK Topics
+                {
+                    std::lock_guard<std::recursive_mutex> lock(displays_mutex_);
+                    for (auto const& [key, selected] : modal_topic_selections_) {
+                        const std::string& topic = key.first;
+                        int p_idx = key.second;
+                        if (p_idx >= 0 && p_idx < (int)displays_.size()) {
+                            bool currently_enabled = displays_[p_idx]->isTopicEnabled(topic);
+                            if (selected != currently_enabled) {
+                                displays_[p_idx]->setTopic(topic);
+                            }
+                            if (selected) {
+                                displays_[p_idx]->setAdded(true);
+                                displays_[p_idx]->setEnabled(true);
+                            }
+                        }
+                    }
+                }
                 show_plugin_modal_ = false;
+                if (plugin_idx_ < 0 || (plugin_idx_ < (int)displays_.size() && !displays_[plugin_idx_]->isAdded())) {
+                    plugin_idx_ = -1;
+                    std::lock_guard<std::recursive_mutex> lock(displays_mutex_);
+                    for (size_t i = 0; i < displays_.size(); ++i) if (displays_[i]->isAdded()) { plugin_idx_ = (int)i; break; }
+                }
+                discover_topics();
+            } else if (modal_selected_idx_ == (modal_tab_idx_ == 2 ? (int)modal_topic_entries_.size() : display_count) + 1) { // Cancel
+                show_plugin_modal_ = false;
+            } else if (modal_tab_idx_ == 2) {
+                if (modal_selected_idx_ < (int)modal_topic_entries_.size()) {
+                    const auto& entry = modal_topic_entries_[modal_selected_idx_];
+                    if (entry.is_plugin_type && entry.display_idx >= 0) {
+                        bool can_select = true;
+                        {
+                            std::lock_guard<std::recursive_mutex> lock(displays_mutex_);
+                            if (displays_[entry.display_idx]->getName() == "Image") {
+                                int count = 0;
+                                for (auto const& [key, selected] : modal_topic_selections_) {
+                                    if (selected && displays_[key.second]->getName() == "Image") count++;
+                                }
+                                if (count >= 2 && !modal_topic_selections_[{entry.topic, entry.display_idx}]) can_select = false;
+                            }
+                        }
+                        if (can_select) modal_topic_selections_[{entry.topic, entry.display_idx}] = !modal_topic_selections_[{entry.topic, entry.display_idx}];
+                    }
+                }
             } else if (modal_selected_idx_ < display_count) {
+                std::lock_guard<std::recursive_mutex> lock(displays_mutex_);
                 int original_idx = filtered_indices[modal_selected_idx_];
                 modal_plugin_states_[original_idx] = !modal_plugin_states_[original_idx];
             }
@@ -747,7 +949,7 @@ bool Visualizer::handle_event(Event event, int mouse_dx) {
             if (mouse.x >= start_x && mouse.x < start_x + modal_width &&
                 mouse.y >= start_y && mouse.y < start_y + modal_height) {
                 
-                int relative_y = mouse.y - (start_y + 4); // Adjust for outer border, header, separator, and inner border
+                int relative_y = mouse.y - (start_y + 4); 
                 if (relative_y >= 0 && relative_y < items_height) {
                     int hovered_idx = relative_y + topic_modal_scroll_;
                     if (hovered_idx < topic_count) {
@@ -776,6 +978,7 @@ bool Visualizer::handle_event(Event event, int mouse_dx) {
         if (event == Event::Return) {
             if (topic_modal_selected_idx_ < (int)topic_modal_list_.size()) {
                 std::string selected_topic = topic_modal_list_[topic_modal_selected_idx_];
+                std::lock_guard<std::recursive_mutex> lock(displays_mutex_);
                 if (topic_target_display_) {
                     if (topic_target_display_->getMessageType() == "sensor_msgs/msg/Image") {
                         auto img_disp = std::dynamic_pointer_cast<ImageDisplay>(topic_target_display_);
@@ -802,16 +1005,21 @@ bool Visualizer::handle_event(Event event, int mouse_dx) {
             if (mouse.motion == Mouse::Released) is_dragging_config_ = false;
         }
 
-        auto cfg = config_target_display_->getTopicConfig(config_modal_topic_);
+        TopicConfig cfg;
+        {
+            std::lock_guard<std::recursive_mutex> lock(displays_mutex_);
+            cfg = config_target_display_->getTopicConfig(config_modal_topic_);
+        }
         if (ConfigHelper::handle_edit_event(event, cfg, config_modal_selected_idx_,
                                           show_config_modal_, right_width_, 
                                           config_target_display_->getName(),
                                           mouse_dx,
                                           was_dragging)) {
 
+            std::lock_guard<std::recursive_mutex> lock(displays_mutex_);
             config_target_display_->setTopicConfig(config_modal_topic_, cfg);
             screen_.PostEvent(Event::Custom);
-            if (!show_config_modal_) is_dragging_config_ = false; // Reset if DONE clicked
+            if (!show_config_modal_) is_dragging_config_ = false; 
             return true;
         }
         return true;
@@ -823,7 +1031,6 @@ bool Visualizer::handle_event(Event event, int mouse_dx) {
         if (mouse.x < 31) {
             int y_cursor = 3; 
 
-            // 1. Fixed Frame Section
             if (mouse.y >= y_cursor && mouse.y < y_cursor + 6) {
                 if (mouse.button == Mouse::Left && mouse.motion == Mouse::Pressed) {
                     show_frame_modal_ = true;
@@ -834,7 +1041,6 @@ bool Visualizer::handle_event(Event event, int mouse_dx) {
             }
             y_cursor += 6;
 
-            // 2. Tool Section
             if (mouse.y >= y_cursor && mouse.y < y_cursor + 6) {
                 if (mouse.button == Mouse::Left && mouse.motion == Mouse::Pressed) {
                     cycle_tool();
@@ -844,7 +1050,6 @@ bool Visualizer::handle_event(Event event, int mouse_dx) {
             }
             y_cursor += 6;
 
-            // 3. Plugins Section
             int plugin_box_height = 13;
             if (mouse.y >= y_cursor && mouse.y < y_cursor + plugin_box_height) {
                 if (mouse.button == Mouse::WheelUp)   { plugin_scroll_ = std::max(0, plugin_scroll_ - 1); screen_.PostEvent(Event::Custom); return true; }
@@ -854,8 +1059,9 @@ bool Visualizer::handle_event(Event event, int mouse_dx) {
                     if (mouse.button == Mouse::Left && mouse.motion == Mouse::Pressed) {
                         show_plugin_modal_ = true;
                         modal_selected_idx_ = 0;
-                        modal_tab_idx_ = 0; // Default to Plugins
+                        modal_tab_idx_ = 0; 
                         modal_scroll_ = 0;
+                        std::lock_guard<std::recursive_mutex> lock(displays_mutex_);
                         for (size_t i = 0; i < displays_.size(); ++i) if (i < 64) modal_plugin_states_[i] = displays_[i]->isAdded();
                     }
                     screen_.PostEvent(Event::Custom);
@@ -863,7 +1069,7 @@ bool Visualizer::handle_event(Event event, int mouse_dx) {
                 }
                 int list_y = mouse.y - (y_cursor + 3) + plugin_scroll_;
                 if (list_y >= 0) {
-                    // Find the Nth "Added" plugin
+                    std::lock_guard<std::recursive_mutex> lock(displays_mutex_);
                     int count = 0;
                     bool found = false;
                     for (size_t i = 0; i < displays_.size(); ++i) {
@@ -893,7 +1099,6 @@ bool Visualizer::handle_event(Event event, int mouse_dx) {
             }
             y_cursor += plugin_box_height;
 
-            // 4. Topics Section
             if (mouse.y >= y_cursor && mouse.y < ftxui::Terminal::Size().dimy - 4) {
                 if (mouse.button == Mouse::WheelUp)   { topic_scroll_ = std::max(0, topic_scroll_ - 1); screen_.PostEvent(Event::Custom); return true; }
                 if (mouse.button == Mouse::WheelDown) { topic_scroll_++; screen_.PostEvent(Event::Custom); return true; }
@@ -901,6 +1106,7 @@ bool Visualizer::handle_event(Event event, int mouse_dx) {
                 int list_y = mouse.y - (y_cursor + 3) + topic_scroll_;
                 if (list_y >= 0 && list_y < (int)available_topics_.size()) {
                     topic_idx_ = list_y;
+                    std::lock_guard<std::recursive_mutex> lock(displays_mutex_);
                     if (plugin_idx_ >= 0) {
                         auto disp = displays_[plugin_idx_];
                         std::string type = disp->getMessageType();
@@ -935,22 +1141,21 @@ bool Visualizer::handle_event(Event event, int mouse_dx) {
                 return true;
             }
         } else if (right_width_ > 0 && mouse.x >= terminal.dimx - right_width_ - 1) {
-            // Right panel click handling
             int ry = mouse.y - 3; 
             if (ry >= 0) {
-                // Determine if we are in the bottom area (Config/Nav2) or top area (Images)
-                // Bottom area is fixed height 14 lines (Border + Header + Sep + 10 content + Border)
                 int bottom_h = 14;
                 bool in_bottom = (mouse.y >= terminal.dimy - bottom_h - 1);
 
                 if (!in_bottom) {
-                    // Top Area: Image selection
                     std::shared_ptr<ImageDisplay> img_disp = nullptr;
                     bool nav2_active = false;
-                    for (auto& d : displays_) {
-                        if (d->isAdded() && d->isEnabled()) {
-                            if (d->getName() == "Image") img_disp = std::dynamic_pointer_cast<ImageDisplay>(d);
-                            if (d->getName() == "Nav2") nav2_active = true;
+                    {
+                        std::lock_guard<std::recursive_mutex> lock(displays_mutex_);
+                        for (auto& d : displays_) {
+                            if (d->isAdded() && d->isEnabled()) {
+                                if (d->getName() == "Image") img_disp = std::dynamic_pointer_cast<ImageDisplay>(d);
+                                if (d->getName() == "Nav2") nav2_active = true;
+                            }
                         }
                     }
 
@@ -964,9 +1169,8 @@ bool Visualizer::handle_event(Event event, int mouse_dx) {
                             int slot = ry / h;
                             if (slot < n) {
                                 int slot_ry = ry % h;
-                                if (slot_ry <= 2) { // Clicked title area
+                                if (slot_ry <= 2) { 
                                     if (mouse.button == Mouse::Left && mouse.motion == Mouse::Pressed) {
-                                        // Open topic selection modal
                                         topic_target_display_ = img_disp;
                                         topic_target_slot_ = slot;
                                         topic_modal_selected_idx_ = 0;
@@ -1000,14 +1204,13 @@ bool Visualizer::handle_event(Event event, int mouse_dx) {
                         }
                     }
                 } else {
-                    // Bottom Area: Config/Nav2
+                    std::lock_guard<std::recursive_mutex> lock(displays_mutex_);
                     if (plugin_idx_ >= 0 && plugin_idx_ < (int)displays_.size()) {
                         auto disp = displays_[plugin_idx_];
                         if (disp->isAdded() && disp->isEnabled()) {
                             if (mouse.button == Mouse::WheelUp)   { config_scroll_ = std::max(0, config_scroll_ - 1); screen_.PostEvent(Event::Custom); return true; }
                             if (mouse.button == Mouse::WheelDown) { config_scroll_++; screen_.PostEvent(Event::Custom); return true; }
                             
-                            // Check for click to open config
                             if (mouse.button == Mouse::Left && mouse.motion == Mouse::Pressed) {
                                 int cry = mouse.y - (terminal.dimy - 12); 
                                 if (cry >= 0 && cry < 10) {
@@ -1028,7 +1231,6 @@ bool Visualizer::handle_event(Event event, int mouse_dx) {
                     }
                 }
             }
-            // Consume all mouse events in the right panel to prevent visualizer zoom
             return true;
         }
     }
@@ -1037,8 +1239,9 @@ bool Visualizer::handle_event(Event event, int mouse_dx) {
         show_plugin_modal_ = !show_plugin_modal_;
         if (show_plugin_modal_) {
             modal_selected_idx_ = 0;
-            modal_tab_idx_ = 0; // Default to Plugins
+            modal_tab_idx_ = 0; 
             modal_scroll_ = 0;
+            std::lock_guard<std::recursive_mutex> lock(displays_mutex_);
             for (size_t i = 0; i < displays_.size(); ++i) {
                 if (i < 64) modal_plugin_states_[i] = displays_[i]->isAdded();
             }
@@ -1056,20 +1259,24 @@ bool Visualizer::handle_event(Event event, int mouse_dx) {
         return true;
     }
 
-    // 2. Try global Nav2 shortcuts (Enter, C, Backspace) if active (Added and Enabled)
-    for (auto& d : displays_) {
-        if (d->getName() == "Nav2" && d->isAdded() && d->isEnabled()) {
-            if (event == Event::Return ||
-                event == Event::Character('c') || event == Event::Character('C') ||
-                event == Event::Special("\x7F") || event == Event::Backspace) {
-                if (d->handle_event(event)) return true;
+    {
+        std::lock_guard<std::recursive_mutex> lock(displays_mutex_);
+        for (auto& d : displays_) {
+            if (d->getName() == "Nav2" && d->isAdded() && d->isEnabled()) {
+                if (event == Event::Return ||
+                    event == Event::Character('c') || event == Event::Character('C') ||
+                    event == Event::Special("\x7F") || event == Event::Backspace) {
+                    if (d->handle_event(event)) return true;
+                }
             }
         }
     }
 
-    // 3. Delegate to active plugin (Handle Space here for contextual toggle)
-    if (plugin_idx_ >= 0 && plugin_idx_ < (int)displays_.size()) {
-        if (displays_[plugin_idx_]->handle_event(event)) return true;
+    {
+        std::lock_guard<std::recursive_mutex> lock(displays_mutex_);
+        if (plugin_idx_ >= 0 && plugin_idx_ < (int)displays_.size()) {
+            if (displays_[plugin_idx_]->handle_event(event)) return true;
+        }
     }
 
     if (event == Event::ArrowUp)    { tar_cam_z_ = tar_cam_z_.load() + 0.5f; return true; }
@@ -1090,29 +1297,30 @@ bool Visualizer::handle_event(Event event, int mouse_dx) {
     if (event == Event::Character('m') || event == Event::Character('M')) {
         float cx = 0.0f, cy = 0.0f, zoom = 100.0f;
         
-        // 1. Find Map Display and get its raw bounds
-        for (auto& d : displays_) {
-            if (d->getName() == "Map") {
-                auto md = std::dynamic_pointer_cast<MapDisplay>(d);
-                if (md) {
-                    float raw_cx = md->getCenterX(), raw_cy = md->getCenterY();
-                    float mw = md->getWidth(), mh = md->getHeight();
-                    
-                    // Transform raw map center (in 'map' frame) to current fixed_frame_
-                    try {
-                        auto t = tf_buffer_->lookupTransform(fixed_frame_, "map", tf2::TimePointZero);
-                        tf2::Vector3 map_origin(raw_cx, raw_cy, 0.0f);
-                        tf2::Transform tf; tf2::fromMsg(t.transform, tf);
-                        tf2::Vector3 target = tf * map_origin;
-                        cx = target.x(); cy = target.y();
-                    } catch (...) {
-                        cx = raw_cx; cy = raw_cy; // Fallback
+        {
+            std::lock_guard<std::recursive_mutex> lock(displays_mutex_);
+            for (auto& d : displays_) {
+                if (d->getName() == "Map") {
+                    auto md = std::dynamic_pointer_cast<MapDisplay>(d);
+                    if (md) {
+                        float raw_cx = md->getCenterX(), raw_cy = md->getCenterY();
+                        float mw = md->getWidth(), mh = md->getHeight();
+                        
+                        try {
+                            auto t = tf_buffer_->lookupTransform(fixed_frame_, "map", tf2::TimePointZero);
+                            tf2::Vector3 map_origin(raw_cx, raw_cy, 0.0f);
+                            tf2::Transform tf; tf2::fromMsg(t.transform, tf);
+                            tf2::Vector3 target = tf * map_origin;
+                            cx = target.x(); cy = target.y();
+                        } catch (...) {
+                            cx = raw_cx; cy = raw_cy; 
+                        }
+                        
+                        float max_dim = std::max(mw, mh);
+                        if (max_dim > 0.1f) zoom = 1500.0f / max_dim; 
                     }
-                    
-                    float max_dim = std::max(mw, mh);
-                    if (max_dim > 0.1f) zoom = 1500.0f / max_dim; 
+                    break;
                 }
-                break;
             }
         }
         tar_pitch_ = 1.57f; tar_yaw_ = 0.0f; tar_dist_ = 10.0f;
@@ -1124,13 +1332,14 @@ bool Visualizer::handle_event(Event event, int mouse_dx) {
     if (event == Event::Character('g') || event == Event::Character('G')) { if (grid_display_) grid_display_->toggle(); return true; }
     if (event == Event::Character('v') || event == Event::Character('V')) { cycle_tool(); return true; }
     if (event == Event::Tab) {
+        std::lock_guard<std::recursive_mutex> lock(displays_mutex_);
         int count = 0;
         do {
             plugin_idx_ = (plugin_idx_ + 1) % (int)displays_.size();
             count++;
-        } while (!displays_[plugin_idx_]->isEnabled() && count < (int)displays_.size());
+        } while (!displays_[plugin_idx_]->isAdded() && count < (int)displays_.size());
         
-        if (!displays_[plugin_idx_]->isEnabled()) plugin_idx_ = -1;
+        if (!displays_[plugin_idx_]->isAdded()) plugin_idx_ = -1;
         discover_topics();
         return true;
     }
@@ -1141,6 +1350,7 @@ bool Visualizer::handle_event(Event event, int mouse_dx) {
     if (event == Event::Character('t') || event == Event::Character('T')) {
         if (!available_topics_.empty()) {
             topic_idx_ = (topic_idx_ - 1 + available_topics_.size()) % available_topics_.size();
+            std::lock_guard<std::recursive_mutex> lock(displays_mutex_);
             if (plugin_idx_ >= 0) {
                 auto disp = displays_[plugin_idx_]; std::string type = disp->getMessageType();
                 if (type != "TF" && type != "sensor_msgs/msg/Image" && type != "None") disp->setTopic(available_topics_[topic_idx_]);
@@ -1151,6 +1361,7 @@ bool Visualizer::handle_event(Event event, int mouse_dx) {
     if (event == Event::Character('y') || event == Event::Character('Y')) {
         if (!available_topics_.empty()) {
             topic_idx_ = (topic_idx_ + 1) % available_topics_.size();
+            std::lock_guard<std::recursive_mutex> lock(displays_mutex_);
             if (plugin_idx_ >= 0) {
                 auto disp = displays_[plugin_idx_]; std::string type = disp->getMessageType();
                 if (type != "TF" && type != "sensor_msgs/msg/Image" && type != "None") disp->setTopic(available_topics_[topic_idx_]);
@@ -1159,6 +1370,7 @@ bool Visualizer::handle_event(Event event, int mouse_dx) {
         return true;
     }
     if (event == Event::Character(' ')) {
+        std::lock_guard<std::recursive_mutex> lock(displays_mutex_);
         if (plugin_idx_ >= 0 && plugin_idx_ < (int)displays_.size()) {
             auto disp = displays_[plugin_idx_];
             if (disp->getMessageType() == "TF" && !available_topics_.empty()) {

@@ -39,6 +39,7 @@ public:
 private:
     void discover_frames();
     void discover_topics();
+    void build_topic_tree();
     ftxui::Element render_frame();
     bool handle_event(ftxui::Event event, int mouse_dx = 0);
 
@@ -49,6 +50,7 @@ private:
     RvizRenderer renderer_;
     std::vector<std::shared_ptr<Display>> displays_;
     std::shared_ptr<Display> grid_display_; 
+    mutable std::recursive_mutex displays_mutex_;
     
     std::string fixed_frame_ = "map";
     std::vector<std::string> available_frames_ = {"map"};
@@ -73,8 +75,19 @@ private:
     bool show_plugin_modal_ = false;
     int modal_selected_idx_ = 0;
     int modal_scroll_ = 0;
-    int modal_tab_idx_ = 0; // 0: Plugins, 1: Panels
+    int modal_tab_idx_ = 0; // 0: Plugins, 1: Panels, 2: Topics
     bool modal_plugin_states_[64] = {false};
+    
+    struct TopicSelectionEntry {
+        std::string label;
+        std::string topic;
+        int display_idx = -1; // Index in displays_ if it's a plugin type leaf
+        int indent = 0;
+        bool is_plugin_type = false;
+    };
+    std::vector<TopicSelectionEntry> modal_topic_entries_;
+    std::map<std::pair<std::string, int>, bool> modal_topic_selections_;
+
     std::vector<std::string> plugin_names_;
     std::vector<std::string> panel_names_;
 
