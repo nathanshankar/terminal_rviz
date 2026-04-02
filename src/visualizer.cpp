@@ -272,11 +272,14 @@ Element Visualizer::render_frame() {
         
         if (visible_plugin_count >= plugin_scroll_ && visible_plugin_count < plugin_scroll_ + 8) {
             bool selected = (static_cast<int>(i) == plugin_idx_);
+            bool hovered = (static_cast<int>(i) == sidebar_hover_idx_);
             bool enabled = displays_[i]->isEnabled();
             auto t = text(" " + displays_[i]->getName());
             
             if (selected) {
                 t = t | inverted | color(enabled ? Color::Yellow : Color::RedLight) | focus;
+            } else if (hovered) {
+                t = t | color(enabled ? Color::Green : Color::Red) | bgcolor(Color::GrayDark);
             } else {
                 t = t | color(enabled ? Color::Green : Color::Red);
             }
@@ -409,7 +412,15 @@ Element Visualizer::render_frame() {
     if (show_plugin_modal_) {
         Elements modal_items;
         int max_visible = 15;
-        int display_count = (int)displays_.size();
+        
+        std::vector<int> filtered_indices;
+        for (size_t i = 0; i < displays_.size(); ++i) {
+            bool is_panel = (displays_[i]->getName() == "Nav2");
+            if (modal_tab_idx_ == 0 && !is_panel) filtered_indices.push_back(i);
+            else if (modal_tab_idx_ == 1 && is_panel) filtered_indices.push_back(i);
+        }
+
+        int display_count = (int)filtered_indices.size();
         
         // Ensure selected index is visible
         if (modal_selected_idx_ < display_count) {
@@ -418,17 +429,29 @@ Element Visualizer::render_frame() {
         }
 
         for (int i = modal_scroll_; i < std::min(display_count, modal_scroll_ + max_visible); ++i) {
+            int original_idx = filtered_indices[i];
             bool selected = (i == modal_selected_idx_);
-            bool checked = modal_plugin_states_[i];
-            auto t = text((checked ? " [X] " : " [ ] ") + displays_[i]->getName());
+            bool checked = modal_plugin_states_[original_idx];
+            auto t = text((checked ? " [X] " : " [ ] ") + displays_[original_idx]->getName());
             if (selected) t = t | inverted | focus;
             else t = t | color(checked ? Color::Green : Color::GrayDark);
             modal_items.push_back(t);
         }
 
+        auto tab_plugin = text(" PLUGINS ");
+        auto tab_panel = text("  PANELS ");
+        if (modal_tab_idx_ == 0) tab_plugin = tab_plugin | inverted | color(Color::Yellow) | bold;
+        else tab_panel = tab_panel | inverted | color(Color::Yellow) | bold;
+
         modal_box = vbox({
-            text(" PLUGIN SELECTION ") | bold | hcenter | color(Color::Yellow),
-            separator(),
+            text(" ADD DISPLAY ") | bold | hcenter | color(Color::Yellow),
+            hbox({
+                filler(),
+                tab_plugin,
+                separator(),
+                tab_panel,
+                filler(),
+            }) | border,
             vbox(std::move(modal_items)) | size(HEIGHT, EQUAL, max_visible) | border,
             hbox({
                 filler(),
@@ -436,7 +459,7 @@ Element Visualizer::render_frame() {
                 text(" [ CANCEL ] ") | (modal_selected_idx_ == display_count + 1 ? (inverted | color(Color::Red) | focus) : nothing),
                 filler(),
             })
-        }) | size(WIDTH, GREATER_THAN, 40) | border | bgcolor(Color::Black) | center;
+        }) | size(WIDTH, EQUAL, 50) | border | bgcolor(Color::Black) | center;
     } else if (show_frame_modal_) {
         show_any_modal = true;
         Elements modal_items;
@@ -598,43 +621,62 @@ bool Visualizer::handle_event(Event event, int mouse_dx) {
     }
 
     if (show_plugin_modal_) {
+        std::vector<int> filtered_indices;
+        for (size_t i = 0; i < displays_.size(); ++i) {
+            bool is_panel = (displays_[i]->getName() == "Nav2");
+            if (modal_tab_idx_ == 0 && !is_panel) filtered_indices.push_back(i);
+            else if (modal_tab_idx_ == 1 && is_panel) filtered_indices.push_back(i);
+        }
+        int display_count = (int)filtered_indices.size();
+
         if (event.is_mouse()) {
             auto mouse = event.mouse();
             if (mouse.button == Mouse::WheelUp) { modal_scroll_ = std::max(0, modal_scroll_ - 1); screen_.PostEvent(Event::Custom); return true; }
             if (mouse.button == Mouse::WheelDown) { 
-                int max_scroll = std::max(0, (int)displays_.size() - 15);
+                int max_scroll = std::max(0, display_count - 15);
                 modal_scroll_ = std::min(max_scroll, modal_scroll_ + 1); 
                 screen_.PostEvent(Event::Custom); return true; 
             }
 
             auto terminal = ftxui::Terminal::Size();
-            int modal_width = 44; 
-            int display_count = (int)displays_.size();
-            int items_height = std::min(15, display_count);
-            int modal_height = items_height + 7; 
+            int modal_width = 50; 
+            int max_h = 15; // Fixed height for layout math
             int start_x = (terminal.dimx - modal_width) / 2;
-            int start_y = (terminal.dimy - modal_height) / 2;
+            int start_y = (terminal.dimy - (max_h + 10)) / 2;
 
-            if (mouse.x >= start_x && mouse.x < start_x + modal_width &&
-                mouse.y >= start_y && mouse.y < start_y + modal_height) {
-                
-                int relative_y = mouse.y - (start_y + 4); // Adjust for outer border, header, separator, and inner border
-                if (relative_y >= 0 && relative_y < items_height) {
+            if (mouse.x >= start_x && mouse.x < start_x + modal_width) {
+                // 1. Tabs check
+                if (mouse.y == start_y + 3) {
+                    if (mouse.button == Mouse::Left && mouse.motion == Mouse::Pressed) {
+                        int middle = start_x + modal_width / 2;
+                        if (mouse.x < middle) { if (modal_tab_idx_ != 0) { modal_tab_idx_ = 0; modal_selected_idx_ = 0; modal_scroll_ = 0; } }
+                        else { if (modal_tab_idx_ != 1) { modal_tab_idx_ = 1; modal_selected_idx_ = 0; modal_scroll_ = 0; } }
+                    }
+                    screen_.PostEvent(Event::Custom);
+                    return true;
+                }
+
+                // 2. List items check
+                int relative_y = mouse.y - (start_y + 6); 
+                if (relative_y >= 0 && relative_y < max_h) {
                     int hovered_idx = relative_y + modal_scroll_;
                     if (hovered_idx < display_count) {
-                        modal_selected_idx_ = hovered_idx;
+                        modal_selected_idx_ = hovered_idx; // Update index for hover highlight
                         if (mouse.button == Mouse::Left && mouse.motion == Mouse::Pressed) {
-                            modal_plugin_states_[modal_selected_idx_] = !modal_plugin_states_[modal_selected_idx_];
+                            int original_idx = filtered_indices[modal_selected_idx_];
+                            modal_plugin_states_[original_idx] = !modal_plugin_states_[original_idx];
                         }
                     }
                     screen_.PostEvent(Event::Custom);
                     return true;
                 }
 
-                if (mouse.y == start_y + modal_height - 2) {
+                // 3. Buttons check (bottom line relative to fixed height)
+                if (mouse.y == start_y + max_h + 7) {
                     int middle = start_x + modal_width / 2;
                     if (mouse.x < middle) modal_selected_idx_ = display_count;
                     else modal_selected_idx_ = display_count + 1;
+
                     if (mouse.button == Mouse::Left && mouse.motion == Mouse::Pressed) {
                         handle_event(Event::Return);
                     }
@@ -645,15 +687,19 @@ bool Visualizer::handle_event(Event event, int mouse_dx) {
             return true;
         }
         if (event == Event::ArrowUp) { modal_selected_idx_ = std::max(0, modal_selected_idx_ - 1); return true; }
-        if (event == Event::ArrowDown) { modal_selected_idx_ = std::min((int)displays_.size() + 1, modal_selected_idx_ + 1); return true; }
+        if (event == Event::ArrowDown) { modal_selected_idx_ = std::min(display_count + 1, modal_selected_idx_ + 1); return true; }
+        if (event == Event::ArrowLeft) { if (modal_tab_idx_ != 0) { modal_tab_idx_ = 0; modal_selected_idx_ = 0; modal_scroll_ = 0; } return true; }
+        if (event == Event::ArrowRight) { if (modal_tab_idx_ != 1) { modal_tab_idx_ = 1; modal_selected_idx_ = 0; modal_scroll_ = 0; } return true; }
+        
         if (event == Event::Character(' ')) {
-            if (modal_selected_idx_ < (int)displays_.size()) {
-                modal_plugin_states_[modal_selected_idx_] = !modal_plugin_states_[modal_selected_idx_];
+            if (modal_selected_idx_ < display_count) {
+                int original_idx = filtered_indices[modal_selected_idx_];
+                modal_plugin_states_[original_idx] = !modal_plugin_states_[original_idx];
             }
             return true;
         }
         if (event == Event::Return) {
-            if (modal_selected_idx_ == (int)displays_.size()) { // OK
+            if (modal_selected_idx_ == display_count) { // OK
                 for (size_t i = 0; i < displays_.size(); ++i) {
                     if (i < 64) {
                         bool was_added = displays_[i]->isAdded();
@@ -668,10 +714,11 @@ bool Visualizer::handle_event(Event event, int mouse_dx) {
                     for (size_t i = 0; i < displays_.size(); ++i) if (displays_[i]->isAdded()) { plugin_idx_ = (int)i; break; }
                 }
                 discover_topics();
-            } else if (modal_selected_idx_ == (int)displays_.size() + 1) { // Cancel
+            } else if (modal_selected_idx_ == display_count + 1) { // Cancel
                 show_plugin_modal_ = false;
-            } else if (modal_selected_idx_ < (int)displays_.size()) {
-                modal_plugin_states_[modal_selected_idx_] = !modal_plugin_states_[modal_selected_idx_];
+            } else if (modal_selected_idx_ < display_count) {
+                int original_idx = filtered_indices[modal_selected_idx_];
+                modal_plugin_states_[original_idx] = !modal_plugin_states_[original_idx];
             }
             screen_.PostEvent(Event::Custom);
             return true;
@@ -807,6 +854,8 @@ bool Visualizer::handle_event(Event event, int mouse_dx) {
                     if (mouse.button == Mouse::Left && mouse.motion == Mouse::Pressed) {
                         show_plugin_modal_ = true;
                         modal_selected_idx_ = 0;
+                        modal_tab_idx_ = 0; // Default to Plugins
+                        modal_scroll_ = 0;
                         for (size_t i = 0; i < displays_.size(); ++i) if (i < 64) modal_plugin_states_[i] = displays_[i]->isAdded();
                     }
                     screen_.PostEvent(Event::Custom);
@@ -816,21 +865,30 @@ bool Visualizer::handle_event(Event event, int mouse_dx) {
                 if (list_y >= 0) {
                     // Find the Nth "Added" plugin
                     int count = 0;
+                    bool found = false;
                     for (size_t i = 0; i < displays_.size(); ++i) {
                         if (displays_[i]->isAdded()) {
                             if (count == list_y) {
-                                plugin_idx_ = i;
-                                if (mouse.button == Mouse::Right && mouse.motion == Mouse::Pressed) {
-                                    displays_[i]->setEnabled(!displays_[i]->isEnabled());
+                                sidebar_hover_idx_ = i;
+                                if (mouse.motion == Mouse::Pressed) {
+                                    if (mouse.button == Mouse::Left) {
+                                        plugin_idx_ = i;
+                                        discover_topics();
+                                    } else if (mouse.button == Mouse::Right) {
+                                        displays_[i]->setEnabled(!displays_[i]->isEnabled());
+                                    }
                                 }
-                                discover_topics();
-                                screen_.PostEvent(Event::Custom);
-                                return true;
+                                found = true;
+                                break;
                             }
                             count++;
                         }
                     }
+                    if (!found) sidebar_hover_idx_ = -1;
+                } else {
+                    sidebar_hover_idx_ = -1;
                 }
+                screen_.PostEvent(Event::Custom);
                 return true;
             }
             y_cursor += plugin_box_height;
@@ -979,6 +1037,8 @@ bool Visualizer::handle_event(Event event, int mouse_dx) {
         show_plugin_modal_ = !show_plugin_modal_;
         if (show_plugin_modal_) {
             modal_selected_idx_ = 0;
+            modal_tab_idx_ = 0; // Default to Plugins
+            modal_scroll_ = 0;
             for (size_t i = 0; i < displays_.size(); ++i) {
                 if (i < 64) modal_plugin_states_[i] = displays_[i]->isAdded();
             }

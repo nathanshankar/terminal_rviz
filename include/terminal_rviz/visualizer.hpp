@@ -55,6 +55,7 @@ private:
     int frame_idx_ = 0;
     
     int plugin_idx_ = -1; 
+    int sidebar_hover_idx_ = -1;
     int plugin_scroll_ = 0;
     int config_scroll_ = 0;
     std::vector<std::string> available_topics_;
@@ -72,8 +73,10 @@ private:
     bool show_plugin_modal_ = false;
     int modal_selected_idx_ = 0;
     int modal_scroll_ = 0;
+    int modal_tab_idx_ = 0; // 0: Plugins, 1: Panels
     bool modal_plugin_states_[64] = {false};
     std::vector<std::string> plugin_names_;
+    std::vector<std::string> panel_names_;
 
     bool show_frame_modal_ = false;
     int modal_frame_selected_idx_ = 0;
