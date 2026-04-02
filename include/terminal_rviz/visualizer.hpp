@@ -6,6 +6,8 @@
 #include <atomic>
 #include <thread>
 #include <set>
+#include <filesystem>
+#include <fstream>
 
 #include "rclcpp/rclcpp.hpp"
 #include "tf2_ros/buffer.h"
@@ -39,12 +41,17 @@ public:
     void cycle_tool();
     std::string get_tool_name() const;
 
+    void save_config(const std::string& path);
+    void load_config(const std::string& path);
+
 private:
     void discover_frames();
     void discover_topics();
     void build_topic_tree();
     ftxui::Element render_frame();
     bool handle_event(ftxui::Event event, int mouse_dx = 0);
+
+    void refresh_file_list();
 
     rclcpp::Node::SharedPtr node_;
     std::shared_ptr<tf2_ros::Buffer> tf_buffer_;
@@ -113,6 +120,15 @@ private:
     std::shared_ptr<Display> config_target_display_;
     bool is_dragging_config_ = false;
     int drag_captured_idx_ = -1;
+
+    // File Browser
+    bool show_file_modal_ = false;
+    bool is_save_mode_ = false;
+    std::filesystem::path current_path_ = std::filesystem::current_path();
+    std::vector<std::filesystem::directory_entry> file_list_;
+    int file_selected_idx_ = 0;
+    int file_scroll_ = 0;
+    std::string input_filename_ = "";
 
     ftxui::ScreenInteractive screen_;
     std::atomic<bool> quit_flag_{false};

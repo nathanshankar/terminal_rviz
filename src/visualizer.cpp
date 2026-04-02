@@ -134,6 +134,140 @@ void Visualizer::run() {
 
 void Visualizer::stop() { quit_flag_ = true; screen_.Exit(); }
 
+void Visualizer::refresh_file_list() {
+    file_list_.clear();
+    try {
+        if (!std::filesystem::exists(current_path_)) current_path_ = std::filesystem::current_path();
+        
+        std::filesystem::path dir_to_read = current_path_;
+        if (!std::filesystem::is_directory(dir_to_read)) dir_to_read = dir_to_read.parent_path();
+
+        for (const auto& entry : std::filesystem::directory_iterator(dir_to_read)) {
+            if (!is_save_mode_) {
+                if (!entry.is_directory() && entry.path().extension() != ".nathan") continue;
+            }
+            file_list_.push_back(entry);
+        }
+        std::sort(file_list_.begin(), file_list_.end(), [](const auto& a, const auto& b) {
+            if (a.is_directory() != b.is_directory()) return a.is_directory();
+            return a.path().filename().string() < b.path().filename().string();
+        });
+    } catch (...) {}
+}
+
+void Visualizer::save_config(const std::string& path) {
+    std::ofstream f(path);
+    if (!f.is_open()) { status_msg_ = "Failed to open file for saving"; return; }
+
+    f << "fixed_frame \"" << fixed_frame_ << "\"\n";
+    f << "camera " << tar_yaw_.load() << " " << tar_pitch_.load() << " " << tar_dist_.load() << " "
+      << tar_cam_x_.load() << " " << tar_cam_y_.load() << " " << tar_cam_z_.load() << " " << tar_zoom_.load() << "\n";
+    
+    if (grid_display_) {
+        f << "grid " << (grid_display_->isEnabled() ? 1 : 0) << "\n";
+    }
+
+    std::lock_guard<std::recursive_mutex> lock(displays_mutex_);
+    for (auto& d : displays_) {
+        f << "display \"" << d->getName() << "\" " << (d->isAdded() ? 1 : 0) << " " << (d->isEnabled() ? 1 : 0) << " \"" << d->getTopic() << "\"\n";
+        auto topics = d->getEnabledTopics();
+        // Ensure the primary topic is included if it's not already
+        if (!d->getTopic().empty() && d->getTopic() != "None") {
+            if (std::find(topics.begin(), topics.end(), d->getTopic()) == topics.end()) {
+                topics.push_back(d->getTopic());
+            }
+        }
+        for (const auto& t : topics) {
+            auto cfg = d->getTopicConfig(t);
+            f << "config \"" << d->getName() << "\" \"" << t << "\" " << cfg.alpha << " " << cfg.size << " " 
+              << (int)cfg.r << " " << (int)cfg.g << " " << (int)cfg.b << " \"" << cfg.color_style << "\" " 
+              << cfg.color_index << " " << cfg.color_index_2 << " \"" << cfg.axis << "\" \"" << cfg.style << "\" " << cfg.history_length << "\n";
+        }
+    }
+    status_msg_ = "Config saved to " + path;
+}
+
+static std::string read_quoted(std::istream& is) {
+    std::string s;
+    is >> std::ws;
+    if (is.peek() == '"') {
+        is.get(); // skip opening quote
+        std::getline(is, s, '"');
+    } else {
+        is >> s;
+    }
+    return s;
+}
+
+void Visualizer::load_config(const std::string& path) {
+    std::ifstream f(path);
+    if (!f.is_open()) { status_msg_ = "Failed to open file for loading"; return; }
+
+    std::string line;
+    while (std::getline(f, line)) {
+        if (line.empty()) continue;
+        std::stringstream ss(line);
+        std::string type; ss >> type;
+        if (type == "fixed_frame") {
+            fixed_frame_ = read_quoted(ss);
+            auto it = std::find(available_frames_.begin(), available_frames_.end(), fixed_frame_);
+            if (it != available_frames_.end()) frame_idx_ = std::distance(available_frames_.begin(), it);
+        } else if (type == "camera") {
+            float y, p, d, cx, cy, cz, z;
+            ss >> y >> p >> d >> cx >> cy >> cz >> z;
+            tar_yaw_ = y; tar_pitch_ = p; tar_dist_ = d;
+            tar_cam_x_ = cx; tar_cam_y_ = cy; tar_cam_z_ = cz; tar_zoom_ = z;
+        } else if (type == "grid") {
+            int enabled; ss >> enabled;
+            if (grid_display_) grid_display_->setEnabled(enabled);
+        } else if (type == "display") {
+            std::string name = read_quoted(ss);
+            int added, enabled;
+            ss >> added >> enabled;
+            std::string topic = read_quoted(ss);
+            std::lock_guard<std::recursive_mutex> lock(displays_mutex_);
+            for (auto& d : displays_) {
+                if (d->getName() == name) {
+                    d->setAdded(added);
+                    d->setEnabled(enabled);
+                    // PointCloud2 and similar might have multiple topics, but setTopic usually adds/toggles.
+                    // For single-topic displays, this is straightforward.
+                    if (!topic.empty() && topic != "None") {
+                        if (d->getTopic() != topic) d->setTopic(topic);
+                    }
+                    break;
+                }
+            }
+        } else if (type == "config") {
+            std::string dname = read_quoted(ss);
+            std::string tname = read_quoted(ss);
+            TopicConfig cfg;
+            int r, g, b;
+            ss >> cfg.alpha >> cfg.size >> r >> g >> b;
+            cfg.r = (uint8_t)r; cfg.g = (uint8_t)g; cfg.b = (uint8_t)b;
+            cfg.color_style = read_quoted(ss);
+            ss >> cfg.color_index >> cfg.color_index_2;
+            cfg.axis = read_quoted(ss);
+            cfg.style = read_quoted(ss);
+            ss >> cfg.history_length;
+            
+            std::lock_guard<std::recursive_mutex> lock(displays_mutex_);
+            for (auto& d : displays_) {
+                if (d->getName() == dname) {
+                    // If it's a multi-topic display, we might need to ensure the topic is enabled first
+                    if (!d->isTopicEnabled(tname) && tname != "None" && !tname.empty()) {
+                        d->setTopic(tname);
+                    }
+                    d->setTopicConfig(tname, cfg);
+                    break;
+                }
+            }
+        }
+    }
+    status_msg_ = "Config loaded from " + path;
+    discover_topics();
+}
+
 void Visualizer::discover_frames() {
     if (!tf_buffer_) return;
     std::vector<std::string> frames; tf_buffer_->_getFrameStrings(frames);
@@ -250,7 +384,6 @@ void Visualizer::discover_topics() {
 
 Element Visualizer::render_frame() {
     auto terminal = ftxui::Terminal::Size();
-    int left_width = 30, right_width = 0;
     Element image_panel = filler(), nav2_panel = filler(), config_panel = filler();
     bool nav2_active = false;
 
@@ -261,8 +394,11 @@ Element Visualizer::render_frame() {
         }
     }
 
-    bool show_blocking_modal = show_plugin_modal_ || show_frame_modal_;
+    bool show_blocking_modal = show_plugin_modal_ || show_frame_modal_ || show_file_modal_;
     bool show_any_modal = show_blocking_modal || show_topic_modal_ || show_config_modal_;
+
+    int left_width = show_any_modal ? 0 : 30;
+    int right_width = 0;
 
     bool has_right_content = false;
     {
@@ -304,8 +440,8 @@ Element Visualizer::render_frame() {
         }
     }
 
-    if (has_right_content) right_width = 64;
-    if (terminal.dimx < 120) right_width = std::min(right_width, terminal.dimx / 3);
+    if (!show_any_modal && has_right_content) right_width = 64;
+    if (!show_any_modal && terminal.dimx < 120) right_width = std::min(right_width, terminal.dimx / 3);
 
     const int target_height = std::max(10, terminal.dimy - 8);
     const int target_width = std::max(10, terminal.dimx - left_width - right_width - 6);
@@ -328,8 +464,8 @@ Element Visualizer::render_frame() {
     renderer_.set_zoom(cur_zoom_);
     renderer_.enable_gpu(use_gpu_);
     
+    renderer_.clear(); // Always clear to prevent stale labels/grid lines
     if (!show_blocking_modal) {
-        renderer_.clear();
         if (grid_display_) grid_display_->render(renderer_, c, fixed_frame_, tf_buffer_);
         std::lock_guard<std::recursive_mutex> lock(displays_mutex_);
         for (auto& display : displays_) {
@@ -424,6 +560,9 @@ Element Visualizer::render_frame() {
             text(" TERMINAL RVIZ ") | bold | color(Color::Yellow),
             separator(),
             text(" Frame: " + fixed_frame_) | color(Color::Cyan),
+            separator(),
+            text(" [SAVE] ") | (is_save_mode_ && show_file_modal_ ? inverted : nothing) | color(Color::Green),
+            text(" [LOAD] ") | (!is_save_mode_ && show_file_modal_ ? inverted : nothing) | color(Color::Cyan),
             filler(),
             text(" [P] Plugins | [F] Frame | [V] Tool | [R] Reset | [M] TopDown | [G] Grid | [Tab] Select | [Space] Toggle | [Q] Quit ") | dim
         }),
@@ -475,18 +614,67 @@ Element Visualizer::render_frame() {
                         }
                     }
                 }
-                return dbox(std::move(label_elements)) | center | flex | border;
+                auto view = dbox(std::move(label_elements)) | center | flex | border;
+                if (show_any_modal) view = view | color(Color::Black) | bgcolor(Color::Black);
+                return view;
                 }(),
                 vbox({ 
-                (show_topic_modal_ || show_config_modal_ ? (filler() | bgcolor(Color::Black)) : image_panel) | flex, 
-                (show_topic_modal_ || show_config_modal_ ? (filler() | size(HEIGHT, EQUAL, 14) | bgcolor(Color::Black)) : 
+                (show_any_modal ? (filler() | bgcolor(Color::Black) | color(Color::Black)) : image_panel) | flex, 
+                (show_any_modal ? (filler() | size(HEIGHT, EQUAL, 14) | bgcolor(Color::Black) | color(Color::Black)) : 
                     (config_active ? config_panel : (nav2_active ? nav2_panel : filler()))) 
                 }) | size(WIDTH, EQUAL, right_width),
                 }) | flex
                 });
     Element modal_box = filler();
 
-    if (show_plugin_modal_) {
+    if (show_file_modal_) {
+        Elements items;
+        int max_visible = 15;
+        int count = (int)file_list_.size();
+        
+        int visible_start = std::max(0, file_scroll_);
+        int visible_end = std::min(count, visible_start + max_visible);
+
+        auto up_one = text(" [ .. ] ") | color(Color::Yellow);
+        if (file_selected_idx_ == -1) up_one = up_one | inverted | focus;
+        items.push_back(up_one);
+
+        for (int i = visible_start; i < visible_end; ++i) {
+            bool selected = (i == file_selected_idx_);
+            auto name = file_list_[i].path().filename().string();
+            if (file_list_[i].is_directory()) name = "[D] " + name;
+            auto t = text(" " + name);
+            if (selected) t = t | inverted | focus;
+            else if (file_list_[i].is_directory()) t = t | color(Color::Blue);
+            else if (file_list_[i].path().extension() == ".nathan") t = t | color(Color::Green);
+            items.push_back(t);
+        }
+
+        auto save_load_btn = text(" [ SAVE ] ");
+        if (file_selected_idx_ == count) save_load_btn = save_load_btn | inverted | color(Color::Green) | focus;
+
+        auto cancel_btn = text(" [ CANCEL ] ");
+        if (file_selected_idx_ == count + 1) cancel_btn = cancel_btn | inverted | color(Color::Red) | focus;
+
+        Elements button_row;
+        button_row.push_back(filler());
+        if (is_save_mode_) button_row.push_back(save_load_btn);
+        button_row.push_back(cancel_btn);
+        button_row.push_back(filler());
+
+        Elements modal_content;
+        modal_content.push_back(text(is_save_mode_ ? " SAVE CONFIG " : " LOAD CONFIG ") | bold | hcenter | color(is_save_mode_ ? Color::Green : Color::Cyan));
+        modal_content.push_back(text(" Path: " + current_path_.string()) | dim | size(WIDTH, EQUAL, 60));
+        modal_content.push_back(separator());
+        modal_content.push_back(vbox(std::move(items)) | size(HEIGHT, EQUAL, max_visible + 1) | border);
+        if (is_save_mode_) {
+            modal_content.push_back(hbox({ text(" Filename: ") | vcenter, text(input_filename_ + "_") | border | color(Color::Yellow) }));
+        }
+        modal_content.push_back(hbox(std::move(button_row)));
+
+        int current_modal_h = is_save_mode_ ? 27 : 24;
+        modal_box = vbox(std::move(modal_content)) | border | bgcolor(Color::Black) | size(WIDTH, EQUAL, 64) | size(HEIGHT, EQUAL, current_modal_h) | center;
+    } else if (show_plugin_modal_) {
         Elements modal_items;
         int max_visible = 15;
         int max_h = 15;
@@ -664,8 +852,98 @@ Element Visualizer::render_frame() {
 }
 
 bool Visualizer::handle_event(Event event, int mouse_dx) {
-    if (event == Event::Character('q') || event == Event::Escape) { quit_flag_ = true; screen_.Exit(); return true; }
-    
+    if (show_file_modal_) {
+        if (event == Event::Escape) { show_file_modal_ = false; return true; }
+        int count = (int)file_list_.size();
+        bool trigger_return = false;
+
+        if (event.is_mouse()) {
+            auto mouse = event.mouse();
+            auto terminal = ftxui::Terminal::Size();
+            int modal_w = 64;
+            int items_h = 16; 
+            int modal_h = is_save_mode_ ? 27 : 24; // title(1)+path(1)+sep(1)+list(18)+btn(1) + 1 outer top + 1 outer bottom = 24. (plus filename(3) for save)
+            int start_x = (terminal.dimx - modal_w) / 2;
+            int start_y = (terminal.dimy - modal_h) / 2;
+
+            if (mouse.button == Mouse::WheelUp) { file_scroll_ = std::max(0, file_scroll_ - 1); screen_.PostEvent(Event::Custom); return true; }
+            if (mouse.button == Mouse::WheelDown) { file_scroll_ = std::min(std::max(0, count - 15), file_scroll_ + 1); screen_.PostEvent(Event::Custom); return true; }
+            
+            if (mouse.x >= start_x && mouse.x < start_x + modal_w) {
+                int list_y = mouse.y - (start_y + 5);
+                if (list_y >= 0 && list_y < items_h) {
+                    file_selected_idx_ = list_y + file_scroll_ - 1;
+                    if (mouse.button == Mouse::Left && mouse.motion == Mouse::Pressed) trigger_return = true;
+                    else { screen_.PostEvent(Event::Custom); return true; }
+                }
+
+                int btn_y = start_y + modal_h - 2;
+                if (mouse.y == btn_y) {
+                    int mid = start_x + modal_w / 2;
+                    if (is_save_mode_) {
+                        if (mouse.x < mid) file_selected_idx_ = count; // SAVE
+                        else file_selected_idx_ = count + 1; // CANCEL
+                    } else {
+                        // In Load mode, buttons start with CANCEL since SAVE is hidden
+                        file_selected_idx_ = count + 1; 
+                    }
+                    if (mouse.button == Mouse::Left && mouse.motion == Mouse::Pressed) trigger_return = true;
+                    else { screen_.PostEvent(Event::Custom); return true; }
+                }
+            }
+        }
+
+        if (event == Event::ArrowUp) { file_selected_idx_ = std::max(-1, file_selected_idx_ - 1); return true; }
+        if (event == Event::ArrowDown) { file_selected_idx_ = std::min(count + 1, file_selected_idx_ + 1); return true; }
+        
+        if (trigger_return || event == Event::Return || (!is_save_mode_ && event == Event::Character(' '))) {
+            if (file_selected_idx_ == count + 1) { // CANCEL
+                show_file_modal_ = false;
+            } else if (is_save_mode_ && (event == Event::Return || file_selected_idx_ == count)) {
+                // SAVE (Always save on Enter unless Cancel is selected)
+                if (!input_filename_.empty()) {
+                    std::string full_path = (current_path_ / input_filename_).string();
+                    if (full_path.find(".nathan") == std::string::npos) full_path += ".nathan";
+                    save_config(full_path);
+                    show_file_modal_ = false;
+                }
+            } else if (file_selected_idx_ == -1) { // Up one level
+                current_path_ = current_path_.parent_path();
+                refresh_file_list();
+                file_selected_idx_ = 0;
+            } else if (file_selected_idx_ >= 0 && file_selected_idx_ < count) {
+                if (file_list_[file_selected_idx_].is_directory()) {
+                    current_path_ = file_list_[file_selected_idx_].path();
+                    refresh_file_list();
+                    file_selected_idx_ = 0;
+                } else {
+                    auto p = file_list_[file_selected_idx_].path();
+                    if (is_save_mode_) {
+                        input_filename_ = p.filename().string();
+                    } else {
+                        load_config(p.string());
+                        show_file_modal_ = false;
+                    }
+                }
+            }
+            screen_.PostEvent(Event::Custom);
+            return true;
+        }
+
+        if (is_save_mode_) {
+            if (event == Event::Backspace) {
+                if (!input_filename_.empty()) input_filename_.pop_back();
+                screen_.PostEvent(Event::Custom);
+                return true;
+            }
+            if (event.is_character()) {
+                input_filename_ += event.character();
+                screen_.PostEvent(Event::Custom);
+                return true;
+            }
+        }
+        return true;
+    }
     if (show_frame_modal_) {
         if (event.is_mouse()) {
             auto mouse = event.mouse();
@@ -1029,6 +1307,30 @@ bool Visualizer::handle_event(Event event, int mouse_dx) {
     if (event.is_mouse()) {
         auto mouse = event.mouse();
         auto terminal = ftxui::Terminal::Size();
+
+        if (mouse.y >= 0 && mouse.y <= 2) { // Top bar area
+            if (mouse.button == Mouse::Left && mouse.motion == Mouse::Pressed) {
+                // Approximate positions
+                int x = mouse.x;
+                int save_start = 15 + 1 + (int)fixed_frame_.size() + 8 + 1; // " TViz " + sep + " Frame: map " + sep
+                if (x >= save_start && x < save_start + 8) {
+                    show_file_modal_ = true;
+                    is_save_mode_ = true;
+                    input_filename_ = "config.nathan";
+                    refresh_file_list();
+                    screen_.PostEvent(Event::Custom);
+                    return true;
+                }
+                if (x >= save_start + 8 && x < save_start + 16) {
+                    show_file_modal_ = true;
+                    is_save_mode_ = false;
+                    refresh_file_list();
+                    screen_.PostEvent(Event::Custom);
+                    return true;
+                }
+            }
+        }
+
         if (mouse.x < 31) {
             int y_cursor = 3; 
 
@@ -1380,6 +1682,7 @@ bool Visualizer::handle_event(Event event, int mouse_dx) {
             } else if (!available_topics_.empty()) { disp->setTopic(available_topics_[topic_idx_]); return true; }
         }
     }
+    if (event == Event::Character('q') || event == Event::Escape) { quit_flag_ = true; screen_.Exit(); return true; }
     return false;
 }
 
