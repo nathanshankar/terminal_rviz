@@ -25,6 +25,19 @@ find_package(nav2_msgs REQUIRED)
 find_package(action_msgs REQUIRED)
 find_package(actionlib_msgs REQUIRED)
 
+option(WITH_GPU "Build with OpenCL GPU support" ON)
+
+if(WITH_GPU)
+  find_package(OpenCL)
+  if(OpenCL_FOUND)
+    message(STATUS "OpenCL found: ${OpenCL_LIBRARIES}")
+    add_definitions(-DUSE_GPU)
+  else()
+    message(WARNING "OpenCL NOT found, building without GPU support")
+    set(WITH_GPU OFF)
+  endif()
+endif()
+
 # Fetch FTXUI
 include(FetchContent)
 FetchContent_Declare(ftxui
@@ -67,6 +80,7 @@ add_library(${PROJECT_NAME}_core
   src/displays/twist_stamped_display.cpp
   src/displays/wrench_display.cpp
   src/renderer.cpp
+  src/gpu_renderer.cpp
 )
 
 target_include_directories(${PROJECT_NAME}_core PUBLIC
@@ -102,6 +116,9 @@ target_link_libraries(${PROJECT_NAME}_core
   ftxui::component
   ${ASSIMP_LIBRARIES}
 )
+if(WITH_GPU AND OpenCL_FOUND)
+  target_link_libraries(${PROJECT_NAME}_core OpenCL::OpenCL)
+endif()
 
 # Main executable
 add_executable(terminal_rviz_node

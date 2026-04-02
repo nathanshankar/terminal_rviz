@@ -49,7 +49,11 @@ int main(int argc, char** argv) {
     rclcpp::init(argc, argv);
 
     auto node = std::make_shared<rclcpp::Node>("terminal_rviz");
+    node->declare_parameter("use_gpu", false);
+    bool use_gpu = node->get_parameter("use_gpu").as_bool();
+
     auto visualizer = std::make_shared<Visualizer>(node);
+    visualizer->set_use_gpu(use_gpu);
 
     // AccelStamped
     auto accel = std::make_shared<AccelStampedDisplay>(node);

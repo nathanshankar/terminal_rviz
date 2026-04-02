@@ -326,6 +326,7 @@ Element Visualizer::render_frame() {
     renderer_.set_size(sw, sh);
     renderer_.set_camera(cur_yaw_, cur_pitch_, 0.0f, cur_dist_, cur_cam_x_, cur_cam_y_, cur_cam_z_);
     renderer_.set_zoom(cur_zoom_);
+    renderer_.enable_gpu(use_gpu_);
     
     if (!show_blocking_modal) {
         renderer_.clear();

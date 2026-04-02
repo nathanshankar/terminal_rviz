@@ -149,37 +149,71 @@ void PointCloudDisplay::render(RvizRenderer& renderer, ftxui::Canvas& /*canvas*/
             }
         }
 
-        for (size_t i = 0; i < total_points; i += skip, iter_x += skip, iter_y += skip, iter_z += skip) {
-            int sx, sy; float sz;
-            if (!projector.project(*iter_x, *iter_y, *iter_z, sx, sy, sz)) continue;
-            
-            uint8_t r_c = 255, g_c = 255, b_c = 255;
-            
-            if (cfg.color_style == "RGB") {
-                if (has_rgb && iter_rgb_ptr) {
-                    auto current_rgb = (*iter_rgb_ptr) + i;
-                    r_c = current_rgb[2]; g_c = current_rgb[1]; b_c = current_rgb[0];
-                }
-            } else if (cfg.color_style == "Flat") {
-                static const uint8_t preset_r[] = {255, 255, 0,   0,   255, 0,   255, 255, 0,   255};
-                static const uint8_t preset_g[] = {255, 0,   255, 0,   255, 255, 0,   127, 255, 127};
-                static const uint8_t preset_b[] = {255, 0,   0,   255, 0,   255, 255, 0,   0,   127};
-                int idx = cfg.color_index % 10;
-                r_c = preset_r[idx]; g_c = preset_g[idx]; b_c = preset_b[idx];
-            } else if (cfg.color_style == "Axis") {
-                float val = (cfg.axis == "Y") ? *iter_y : ((cfg.axis == "Z") ? *iter_z : *iter_x);
-                float v = std::clamp((val - min_val) * range_inv, 0.0f, 1.0f);
-                if (v < 0.25f) { r_c = 255; g_c = static_cast<uint8_t>(v * 1020); b_c = 0; }
-                else if (v < 0.5f) { r_c = static_cast<uint8_t>((0.5f - v) * 1020); g_c = 255; b_c = 0; }
-                else if (v < 0.75f) { r_c = 0; g_c = 255; b_c = static_cast<uint8_t>((v - 0.5f) * 1020); }
-                else { r_c = 0; g_c = static_cast<uint8_t>((1.0f - v) * 1020); b_c = 255; }
-            }
+        if (renderer.is_gpu_enabled() && cfg.style == "Points") {
+            std::vector<float> gpu_pts;
+            std::vector<uint8_t> gpu_cols;
+            gpu_pts.reserve((total_points / skip) * 3);
+            gpu_cols.reserve((total_points / skip) * 3);
 
-            if (cfg.style == "Points") {
-                renderer.plot(sx, sy, sz, r_c, g_c, b_c, cfg.alpha);
-            } else {
-                tf2::Vector3 p_world = pc_to_world * tf2::Vector3(*iter_x, *iter_y, *iter_z);
-                render_styled_point(renderer, p_world.x(), p_world.y(), p_world.z(), cfg, r_c, g_c, b_c);
+            for (size_t i = 0; i < total_points; i += skip, iter_x += skip, iter_y += skip, iter_z += skip) {
+                gpu_pts.push_back(*iter_x); gpu_pts.push_back(*iter_y); gpu_pts.push_back(*iter_z);
+                
+                uint8_t r_c = 255, g_c = 255, b_c = 255;
+                if (cfg.color_style == "RGB") {
+                    if (has_rgb && iter_rgb_ptr) {
+                        auto current_rgb = (*iter_rgb_ptr) + i;
+                        r_c = current_rgb[2]; g_c = current_rgb[1]; b_c = current_rgb[0];
+                    }
+                } else if (cfg.color_style == "Flat") {
+                    static const uint8_t preset_r[] = {255, 255, 0,   0,   255, 0,   255, 255, 0,   255};
+                    static const uint8_t preset_g[] = {255, 0,   255, 0,   255, 255, 0,   127, 255, 127};
+                    static const uint8_t preset_b[] = {255, 0,   0,   255, 0,   255, 255, 0,   0,   127};
+                    int idx = cfg.color_index % 10;
+                    r_c = preset_r[idx]; g_c = preset_g[idx]; b_c = preset_b[idx];
+                } else if (cfg.color_style == "Axis") {
+                    float val = (cfg.axis == "Y") ? *iter_y : ((cfg.axis == "Z") ? *iter_z : *iter_x);
+                    float v = std::clamp((val - min_val) * range_inv, 0.0f, 1.0f);
+                    if (v < 0.25f) { r_c = 255; g_c = static_cast<uint8_t>(v * 1020); b_c = 0; }
+                    else if (v < 0.5f) { r_c = static_cast<uint8_t>((0.5f - v) * 1020); g_c = 255; b_c = 0; }
+                    else if (v < 0.75f) { r_c = 0; g_c = 255; b_c = static_cast<uint8_t>((v - 0.5f) * 1020); }
+                    else { r_c = 0; g_c = static_cast<uint8_t>((1.0f - v) * 1020); b_c = 255; }
+                }
+                gpu_cols.push_back(r_c); gpu_cols.push_back(g_c); gpu_cols.push_back(b_c);
+            }
+            renderer.gpu_render_points(gpu_pts, gpu_cols, projector, cfg.alpha);
+        } else {
+            for (size_t i = 0; i < total_points; i += skip, iter_x += skip, iter_y += skip, iter_z += skip) {
+                int sx, sy; float sz;
+                if (!projector.project(*iter_x, *iter_y, *iter_z, sx, sy, sz)) continue;
+                
+                uint8_t r_c = 255, g_c = 255, b_c = 255;
+                
+                if (cfg.color_style == "RGB") {
+                    if (has_rgb && iter_rgb_ptr) {
+                        auto current_rgb = (*iter_rgb_ptr) + i;
+                        r_c = current_rgb[2]; g_c = current_rgb[1]; b_c = current_rgb[0];
+                    }
+                } else if (cfg.color_style == "Flat") {
+                    static const uint8_t preset_r[] = {255, 255, 0,   0,   255, 0,   255, 255, 0,   255};
+                    static const uint8_t preset_g[] = {255, 0,   255, 0,   255, 255, 0,   127, 255, 127};
+                    static const uint8_t preset_b[] = {255, 0,   0,   255, 0,   255, 255, 0,   0,   127};
+                    int idx = cfg.color_index % 10;
+                    r_c = preset_r[idx]; g_c = preset_g[idx]; b_c = preset_b[idx];
+                } else if (cfg.color_style == "Axis") {
+                    float val = (cfg.axis == "Y") ? *iter_y : ((cfg.axis == "Z") ? *iter_z : *iter_x);
+                    float v = std::clamp((val - min_val) * range_inv, 0.0f, 1.0f);
+                    if (v < 0.25f) { r_c = 255; g_c = static_cast<uint8_t>(v * 1020); b_c = 0; }
+                    else if (v < 0.5f) { r_c = static_cast<uint8_t>((0.5f - v) * 1020); g_c = 255; b_c = 0; }
+                    else if (v < 0.75f) { r_c = 0; g_c = 255; b_c = static_cast<uint8_t>((v - 0.5f) * 1020); }
+                    else { r_c = 0; g_c = static_cast<uint8_t>((1.0f - v) * 1020); b_c = 255; }
+                }
+
+                if (cfg.style == "Points") {
+                    renderer.plot(sx, sy, sz, r_c, g_c, b_c, cfg.alpha);
+                } else {
+                    tf2::Vector3 p_world = pc_to_world * tf2::Vector3(*iter_x, *iter_y, *iter_z);
+                    render_styled_point(renderer, p_world.x(), p_world.y(), p_world.z(), cfg, r_c, g_c, b_c);
+                }
             }
         }
     }

@@ -94,38 +94,69 @@ void LaserScanDisplay::render(RvizRenderer& renderer, ftxui::Canvas&, const std:
             int idx = cfg.color_index % 10;
             r_b = preset_r[idx]; g_b = preset_g[idx]; b_b = preset_b[idx];
         }
-        
-        for (size_t i = 0; i < msg->ranges.size(); ++i) {
-            float r = msg->ranges[i];
-            if (r < msg->range_min || r > msg->range_max) continue;
-            
-            float angle = msg->angle_min + i * msg->angle_increment;
-            float lx = r * std::cos(angle);
-            float ly = r * std::sin(angle);
 
-            int sx, sy; float sz;
-            if (!projector.project(lx, ly, 0, sx, sy, sz)) continue;
-            
-            uint8_t r_c = r_b, g_c = g_b, b_c = b_b;
-            if (cfg.color_style == "Axis") {
-                float wx = rot[0][0] * lx + rot[0][1] * ly + trans.x();
-                float wy = rot[1][0] * lx + rot[1][1] * ly + trans.y();
-                float wz = rot[2][0] * lx + rot[2][1] * ly + trans.z();
-                float val = (cfg.axis == "X") ? wx : ((cfg.axis == "Y") ? wy : wz);
-                float v = std::clamp((val + 2.0f) / 4.0f, 0.0f, 1.0f);
-                if (v < 0.25f) { r_c = 255; g_c = static_cast<uint8_t>(v * 1020); b_c = 0; }
-                else if (v < 0.5f) { r_c = static_cast<uint8_t>((0.5f - v) * 1020); g_c = 255; b_c = 0; }
-                else if (v < 0.75f) { r_c = 0; g_c = 255; b_c = static_cast<uint8_t>((v - 0.5f) * 1020); }
-                else { r_c = 0; g_c = static_cast<uint8_t>((1.0f - v) * 1020); b_c = 255; }
+        if (renderer.is_gpu_enabled() && cfg.style == "Points") {
+            std::vector<float> gpu_pts;
+            std::vector<uint8_t> gpu_cols;
+            gpu_pts.reserve(msg->ranges.size() * 3);
+            gpu_cols.reserve(msg->ranges.size() * 3);
+
+            for (size_t i = 0; i < msg->ranges.size(); ++i) {
+                float r = msg->ranges[i];
+                if (r < msg->range_min || r > msg->range_max) continue;
+                float angle = msg->angle_min + i * msg->angle_increment;
+                float lx = r * std::cos(angle);
+                float ly = r * std::sin(angle);
+                gpu_pts.push_back(lx); gpu_pts.push_back(ly); gpu_pts.push_back(0);
+
+                uint8_t r_c = r_b, g_c = g_b, b_c = b_b;
+                if (cfg.color_style == "Axis") {
+                    float wx = rot[0][0] * lx + rot[0][1] * ly + trans.x();
+                    float wy = rot[1][0] * lx + rot[1][1] * ly + trans.y();
+                    float wz = rot[2][0] * lx + rot[2][1] * ly + trans.z();
+                    float val = (cfg.axis == "X") ? wx : ((cfg.axis == "Y") ? wy : wz);
+                    float v = std::clamp((val + 2.0f) / 4.0f, 0.0f, 1.0f);
+                    if (v < 0.25f) { r_c = 255; g_c = static_cast<uint8_t>(v * 1020); b_c = 0; }
+                    else if (v < 0.5f) { r_c = static_cast<uint8_t>((0.5f - v) * 1020); g_c = 255; b_c = 0; }
+                    else if (v < 0.75f) { r_c = 0; g_c = 255; b_c = static_cast<uint8_t>((v - 0.5f) * 1020); }
+                    else { r_c = 0; g_c = static_cast<uint8_t>((1.0f - v) * 1020); b_c = 255; }
+                }
+                gpu_cols.push_back(r_c); gpu_cols.push_back(g_c); gpu_cols.push_back(b_c);
             }
+            renderer.gpu_render_points(gpu_pts, gpu_cols, projector, cfg.alpha);
+        } else {
+            for (size_t i = 0; i < msg->ranges.size(); ++i) {
+                float r = msg->ranges[i];
+                if (r < msg->range_min || r > msg->range_max) continue;
+                
+                float angle = msg->angle_min + i * msg->angle_increment;
+                float lx = r * std::cos(angle);
+                float ly = r * std::sin(angle);
 
-            if (cfg.style == "Points") {
-                renderer.plot(sx, sy, sz, r_c, g_c, b_c, cfg.alpha);
-            } else {
-                float wx = rot[0][0] * lx + rot[0][1] * ly + trans.x();
-                float wy = rot[1][0] * lx + rot[1][1] * ly + trans.y();
-                float wz = rot[2][0] * lx + rot[2][1] * ly + trans.z();
-                render_styled_point(renderer, wx, wy, wz, cfg, r_c, g_c, b_c);
+                int sx, sy; float sz;
+                if (!projector.project(lx, ly, 0, sx, sy, sz)) continue;
+                
+                uint8_t r_c = r_b, g_c = g_b, b_c = b_b;
+                if (cfg.color_style == "Axis") {
+                    float wx = rot[0][0] * lx + rot[0][1] * ly + trans.x();
+                    float wy = rot[1][0] * lx + rot[1][1] * ly + trans.y();
+                    float wz = rot[2][0] * lx + rot[2][1] * ly + trans.z();
+                    float val = (cfg.axis == "X") ? wx : ((cfg.axis == "Y") ? wy : wz);
+                    float v = std::clamp((val + 2.0f) / 4.0f, 0.0f, 1.0f);
+                    if (v < 0.25f) { r_c = 255; g_c = static_cast<uint8_t>(v * 1020); b_c = 0; }
+                    else if (v < 0.5f) { r_c = static_cast<uint8_t>((0.5f - v) * 1020); g_c = 255; b_c = 0; }
+                    else if (v < 0.75f) { r_c = 0; g_c = 255; b_c = static_cast<uint8_t>((v - 0.5f) * 1020); }
+                    else { r_c = 0; g_c = static_cast<uint8_t>((1.0f - v) * 1020); b_c = 255; }
+                }
+
+                if (cfg.style == "Points") {
+                    renderer.plot(sx, sy, sz, r_c, g_c, b_c, cfg.alpha);
+                } else {
+                    float wx = rot[0][0] * lx + rot[0][1] * ly + trans.x();
+                    float wy = rot[1][0] * lx + rot[1][1] * ly + trans.y();
+                    float wz = rot[2][0] * lx + rot[2][1] * ly + trans.z();
+                    render_styled_point(renderer, wx, wy, wz, cfg, r_c, g_c, b_c);
+                }
             }
         }
     }

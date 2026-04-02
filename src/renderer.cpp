@@ -1,9 +1,11 @@
 #include "terminal_rviz/renderer.hpp"
+#include "terminal_rviz/gpu_renderer.hpp"
 #include <algorithm>
 
 namespace terminal_rviz {
 
 RvizRenderer::RvizRenderer() {}
+RvizRenderer::~RvizRenderer() = default;
 
 void RvizRenderer::set_size(int width, int height) {
     if (width_ != width || height_ != height) {
@@ -14,6 +16,9 @@ void RvizRenderer::set_size(int width, int height) {
         char_colors_.assign((width_ / 2) * (height_ / 4), ftxui::Color::White);
         is_dirty_.assign((width_ / 2) * (height_ / 4), false);
         dirty_cells_.clear();
+#ifdef USE_GPU
+        if (gpu_renderer_) gpu_renderer_->set_size(width_, height_);
+#endif
     }
 }
 
@@ -24,17 +29,14 @@ void RvizRenderer::set_camera(float yaw, float pitch, float roll, float dist, fl
     float s_p = std::sin(pitch_), c_p = std::cos(pitch_);
     float s_r = std::sin(roll_), c_r = std::cos(roll_);
 
-    // tx: rx=0, ry=0, rz=1
     m00_ = s_y * c_r + c_y * s_p * s_r;
     m10_ = s_y * s_r - c_y * s_p * c_r;
     m20_ = c_y * c_p;
 
-    // ty: rx=-1, ry=0, rz=0
     m01_ = -c_y * c_r + s_y * s_p * s_r;
     m11_ = -c_y * s_r - s_y * s_p * c_r;
     m21_ = s_y * c_p;
 
-    // tz: rx=0, ry=-1, rz=0
     m02_ = c_p * s_r;
     m12_ = -c_p * c_r;
     m22_ = -s_p;
@@ -56,11 +58,13 @@ void RvizRenderer::clear() {
         }
     }
     dirty_cells_.clear();
+#ifdef USE_GPU
+    if (use_gpu_ && gpu_renderer_) gpu_renderer_->clear();
+#endif
 }
 
 bool RvizRenderer::project(float dx, float dy, float dz, int& out_sx, int& out_sy, float& out_z) const {
     float tx = dx - cx_, ty = dy - cy_, tz = dz - cz_;
-    
     out_z = m20_ * tx + m21_ * ty + m22_ * tz + dist_;
     if (out_z > 0.1f) {
         float x3 = m00_ * tx + m01_ * ty + m02_ * tz;
@@ -94,11 +98,12 @@ void RvizRenderer::plot(int x, int y, float z, uint8_t r, uint8_t g, uint8_t b, 
         int cw = width_ / 2;
         int c_idx = cy * cw + cx;
         
+        if (!is_dirty_[c_idx]) {
+            dirty_cells_.push_back(c_idx);
+            is_dirty_[c_idx] = true;
+        }
+
         if (z < char_z_buffer_[c_idx]) {
-            if (!is_dirty_[c_idx]) {
-                dirty_cells_.push_back(c_idx);
-                is_dirty_[c_idx] = true;
-            }
             char_z_buffer_[c_idx] = z;
             char_colors_[c_idx] = ftxui::Color::RGB(static_cast<uint8_t>(r * final_alpha), 
                                                    static_cast<uint8_t>(g * final_alpha), 
@@ -204,7 +209,7 @@ void RvizRenderer::draw_arrow(float x1, float y1, float z1, float x2, float y2, 
     if (len < 1e-6) return;
     dx /= len; dy /= len; dz /= len;
     float head_len = 0.2f * head_scale, head_width = 0.1f * head_scale;
-    float ux = (std::abs(dz) < 0.9f) ? 0 : 0, uy = (std::abs(dz) < 0.9f) ? 0 : 1, uz = (std::abs(dz) < 0.9f) ? 1 : 0;
+    float ux, uy, uz;
     if (std::abs(dz) < 0.9f) { ux = -dy; uy = dx; uz = 0; } else { ux = 0; uy = -dz; uz = dy; }
     float vlen = std::sqrt(ux*ux + uy*uy + uz*uz); ux /= vlen; uy /= vlen; uz /= vlen;
     float vx = dy*uz - dz*uy, vy = dz*ux - dx*uz, vz = dx*uy - dy*ux;
@@ -232,6 +237,36 @@ void RvizRenderer::draw_circle(float x, float y, float z, float radius, uint8_t 
 
 
 void RvizRenderer::finish(ftxui::Canvas& canvas) {
+#ifdef USE_GPU
+    if (use_gpu_ && gpu_renderer_) {
+        std::vector<Dot> gpu_dots(width_ * height_);
+        gpu_renderer_->download(gpu_dots);
+
+        int cw = width_ / 2;
+        for (int i = 0; i < width_ * height_; ++i) {
+            if (gpu_dots[i].z < 1000.0f) {
+                if (gpu_dots[i].z < dot_buffer_[i].z) {
+                    dot_buffer_[i] = gpu_dots[i];
+                    int y = i / width_, x = i % width_;
+                    int c_idx = (y / 4) * cw + (x / 2);
+                    if (!is_dirty_[c_idx]) {
+                        is_dirty_[c_idx] = true;
+                        dirty_cells_.push_back(c_idx);
+                    }
+                    if (gpu_dots[i].z < char_z_buffer_[c_idx]) {
+                        char_z_buffer_[c_idx] = gpu_dots[i].z;
+                        char_colors_[c_idx] = ftxui::Color::RGB(
+                            static_cast<uint8_t>(gpu_dots[i].r * gpu_dots[i].alpha),
+                            static_cast<uint8_t>(gpu_dots[i].g * gpu_dots[i].alpha),
+                            static_cast<uint8_t>(gpu_dots[i].b * gpu_dots[i].alpha)
+                        );
+                    }
+                }
+            }
+        }
+    }
+#endif
+
     int cw = width_ / 2;
     for (int c_idx : dirty_cells_) {
         int cx = c_idx % cw, cy = c_idx / cw;
@@ -256,40 +291,42 @@ void RvizRenderer::finish(ftxui::Canvas& canvas) {
 
 RvizRenderer::Projector RvizRenderer::get_projector(const tf2::Transform& world_to_object) const {
     Projector p;
-    p.zoom = zoom_;
-    p.width = width_;
-    p.height = height_;
-
-    // M_view row 0: m00, m01, m02, -(m00*cx + m01*cy + m02*cz)
-    // M_view row 1: m10, m11, m12, -(m10*cx + m11*cy + m12*cz)
-    // M_view row 2: m20, m21, m22, -(m20*cx + m21*cy + m22*cz) + dist
-    
+    p.zoom = zoom_; p.width = width_; p.height = height_;
     float v03 = -(m00_ * cx_ + m01_ * cy_ + m02_ * cz_);
     float v13 = -(m10_ * cx_ + m11_ * cy_ + m12_ * cz_);
     float v23 = -(m20_ * cx_ + m21_ * cy_ + m22_ * cz_) + dist_;
-
     tf2::Matrix3x3 rot = world_to_object.getBasis();
     tf2::Vector3 trans = world_to_object.getOrigin();
-
-    // Combined matrix = M_view * world_to_object
-    // [ m00 m01 m02 v03 ]   [ r00 r01 r02 t0 ]
-    // [ m10 m11 m12 v13 ] * [ r10 r11 r12 t1 ]
-    // [ m20 m21 m22 v23 ]   [ r20 r21 r22 t2 ]
-    //                       [  0   0   0   1 ]
-    
     for (int i = 0; i < 3; ++i) {
-        float m_row_i[3];
-        float v_i3;
+        float m_row_i[3], v_i3;
         if (i == 0) { m_row_i[0] = m00_; m_row_i[1] = m01_; m_row_i[2] = m02_; v_i3 = v03; }
         else if (i == 1) { m_row_i[0] = m10_; m_row_i[1] = m11_; m_row_i[2] = m12_; v_i3 = v13; }
         else { m_row_i[0] = m20_; m_row_i[1] = m21_; m_row_i[2] = m22_; v_i3 = v23; }
-
-        for (int j = 0; j < 3; ++j) {
-            p.m[i][j] = m_row_i[0] * rot[0][j] + m_row_i[1] * rot[1][j] + m_row_i[2] * rot[2][j];
-        }
+        for (int j = 0; j < 3; ++j) p.m[i][j] = m_row_i[0] * rot[0][j] + m_row_i[1] * rot[1][j] + m_row_i[2] * rot[2][j];
         p.m[i][3] = m_row_i[0] * trans.x() + m_row_i[1] * trans.y() + m_row_i[2] * trans.z() + v_i3;
     }
     return p;
+}
+
+void RvizRenderer::enable_gpu(bool enable) {
+#ifdef USE_GPU
+    if (enable && !gpu_renderer_) {
+        gpu_renderer_ = std::make_unique<GpuRvizRenderer>();
+        if (!gpu_renderer_->initialize()) { gpu_renderer_.reset(); use_gpu_ = false; return; }
+        gpu_renderer_->set_size(width_, height_);
+    }
+    use_gpu_ = enable && (gpu_renderer_ != nullptr);
+#else
+    (void)enable; use_gpu_ = false;
+#endif
+}
+
+void RvizRenderer::gpu_render_points(const std::vector<float>& points, const std::vector<uint8_t>& colors, const Projector& projector, float alpha) {
+#ifdef USE_GPU
+    if (use_gpu_ && gpu_renderer_) gpu_renderer_->render_points(points, colors, projector, alpha);
+#else
+    (void)points; (void)colors; (void)projector; (void)alpha;
+#endif
 }
 
 bool RvizRenderer::pick_ground_plane(int sx, int sy, float& out_x, float& out_y) const {

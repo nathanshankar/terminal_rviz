@@ -26,6 +26,9 @@ public:
     void run();
     void stop();
 
+    void set_use_gpu(bool use) { use_gpu_ = use; }
+    bool get_use_gpu() const { return use_gpu_; }
+
     std::string get_fixed_frame() const { return fixed_frame_; }
     void set_grid_display(std::shared_ptr<Display> display) { grid_display_ = display; }
     std::shared_ptr<tf2_ros::Buffer> get_tf_buffer() const { return tf_buffer_; }
@@ -113,6 +116,7 @@ private:
 
     ftxui::ScreenInteractive screen_;
     std::atomic<bool> quit_flag_{false};
+    bool use_gpu_ = false;
 
     // --- Animated Camera State ---
     // Targets (Atomic for thread safety)

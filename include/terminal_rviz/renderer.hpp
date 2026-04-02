@@ -14,6 +14,7 @@ namespace terminal_rviz {
 class RvizRenderer {
 public:
     RvizRenderer();
+    ~RvizRenderer();
 
     void set_size(int width, int height);
     void set_camera(float yaw, float pitch, float roll, float dist, float cx, float cy, float cz);
@@ -50,6 +51,7 @@ public:
     struct Dot {
         float z = 1000.0f;
         uint8_t r = 255, g = 255, b = 255;
+        uint8_t padding = 0; // Explicit padding for 4-byte alignment of next member
         float alpha = 1.0f;
     };
 
@@ -84,6 +86,10 @@ public:
     };
     Projector get_projector(const tf2::Transform& world_to_object) const;
 
+    void enable_gpu(bool enable);
+    bool is_gpu_enabled() const { return use_gpu_; }
+    void gpu_render_points(const std::vector<float>& points, const std::vector<uint8_t>& colors, const Projector& projector, float alpha);
+
     bool pick_ground_plane(int sx, int sy, float& out_x, float& out_y) const;
 
     int get_width() const { return width_; }
@@ -108,6 +114,11 @@ private:
     std::vector<ftxui::Color> char_colors_;
     std::vector<int> dirty_cells_;
     std::vector<bool> is_dirty_;
+
+    bool use_gpu_ = false;
+#ifdef USE_GPU
+    std::unique_ptr<class GpuRvizRenderer> gpu_renderer_;
+#endif
 };
 
 } // namespace terminal_rviz
