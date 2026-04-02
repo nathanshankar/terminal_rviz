@@ -186,14 +186,13 @@ bool ConfigHelper::handle_edit_event(ftxui::Event event, TopicConfig& cfg,
         int start_x = terminal.dimx - right_panel_width;
         int start_y = terminal.dimy - 20;
         
-        // 1. Update selection only if NOT dragging (Hover support)
-        if (!is_dragging) {
+        // 1. Update selection only if NOT dragging or clicking (Selection follows hover ONLY when not active)
+        if (!is_dragging && mouse.button == Mouse::None) {
             if (mouse.x >= start_x && mouse.x < terminal.dimx && mouse.y >= start_y) {
                 int ry = mouse.y - (start_y + 3);
                 if (ry >= 0 && ry < (int)active_indices.size() - 1) {
                     selected_idx = active_indices[ry];
                 } else {
-                    // Precise check for DONE button line: 3 header/sep + items + 1 separator
                     int done_y = start_y + 3 + (int)active_indices.size() - 1 + 1;
                     if (mouse.y == done_y) {
                         selected_idx = 6;
@@ -204,6 +203,19 @@ bool ConfigHelper::handle_edit_event(ftxui::Event event, TopicConfig& cfg,
 
         // 2. Perform action on current selection if mouse button is down
         if (mouse.button == Mouse::Left) {
+            // Update selection on initial Press to ensure we interact with what we clicked
+            if (mouse.motion == Mouse::Pressed) {
+                if (mouse.x >= start_x && mouse.x < terminal.dimx && mouse.y >= start_y) {
+                    int ry = mouse.y - (start_y + 3);
+                    if (ry >= 0 && ry < (int)active_indices.size() - 1) {
+                        selected_idx = active_indices[ry];
+                    } else {
+                        int done_y = start_y + 3 + (int)active_indices.size() - 1 + 1;
+                        if (mouse.y == done_y) selected_idx = 6;
+                    }
+                }
+            }
+
             if (selected_idx == 2) { // Size: Scrubber
                 if (is_dragging || mouse.motion == Mouse::Pressed) {
                     cfg.size = std::max(0.001f, cfg.size + mouse_dx * 0.01f);
@@ -223,8 +235,8 @@ bool ConfigHelper::handle_edit_event(ftxui::Event event, TopicConfig& cfg,
                 return true;
             }
             
-            // For buttons/toggles, only respond to initial Press
-            if (mouse.motion == Mouse::Pressed && !is_dragging) {
+            // For buttons/toggles, trigger on RELEASE to ensure reliable single-click interaction
+            if (mouse.motion == Mouse::Released) {
                 if (selected_idx == 6) show_modal = false;
                 else handle_edit_event(Event::Return, cfg, selected_idx, show_modal, right_panel_width, display_name);
                 return true;

@@ -28,6 +28,7 @@
 #include "terminal_rviz/displays/range_display.hpp"
 #include "terminal_rviz/displays/relative_humidity_display.hpp"
 #include "terminal_rviz/displays/robot_model_display.hpp"
+#include "terminal_rviz/displays/teleop_display.hpp"
 #include "terminal_rviz/displays/temperature_display.hpp"
 #include "terminal_rviz/displays/tf_display.hpp"
 #include "terminal_rviz/displays/twist_stamped_display.hpp"
@@ -191,6 +192,11 @@ int main(int argc, char** argv) {
     auto temp = std::make_shared<TemperatureDisplay>(node);
     temp->onInitialize();
     visualizer->add_display(temp);
+
+    // Teleop
+    auto teleop = std::make_shared<TeleopDisplay>(node);
+    teleop->onInitialize();
+    visualizer->add_display(teleop);
 
     // TF
     auto tf = std::make_shared<TFDisplay>(node);

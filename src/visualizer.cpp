@@ -384,20 +384,22 @@ void Visualizer::discover_topics() {
 
 Element Visualizer::render_frame() {
     auto terminal = ftxui::Terminal::Size();
-    Element image_panel = filler(), nav2_panel = filler(), config_panel = filler();
+    Element image_panel = filler(), nav2_panel = filler(), teleop_panel = filler(), config_panel = filler();
     bool nav2_active = false;
+    bool teleop_active = false;
 
     {
         std::lock_guard<std::recursive_mutex> lock(displays_mutex_);
         for (auto& d : displays_) {
             if (d->getName() == "Nav2" && d->isAdded() && d->isEnabled()) nav2_active = true;
+            if (d->getName() == "Teleop" && d->isAdded() && d->isEnabled()) teleop_active = true;
         }
     }
 
     bool show_blocking_modal = show_plugin_modal_ || show_frame_modal_ || show_file_modal_;
     bool show_any_modal = show_blocking_modal || show_topic_modal_ || show_config_modal_;
 
-    int left_width = show_any_modal ? 0 : 30;
+    int left_width = show_blocking_modal ? 0 : 30;
     int right_width = 0;
 
     bool has_right_content = false;
@@ -409,7 +411,7 @@ Element Visualizer::render_frame() {
                 auto img_disp = std::dynamic_pointer_cast<ImageDisplay>(display);
                 if (img_disp && img_disp->getEnabledTopicCount() > 0) { 
                     has_right_content = true;
-                    if (!show_any_modal) image_panel = img_disp->render_2d(nav2_active);
+                    if (!show_blocking_modal) image_panel = img_disp->render_2d(nav2_active || teleop_active);
                 }
             }
         }
@@ -419,7 +421,18 @@ Element Visualizer::render_frame() {
         std::lock_guard<std::recursive_mutex> lock(displays_mutex_);
         for (auto& d : displays_) {
             if (d->getName() == "Nav2") {
-                if (!show_any_modal) nav2_panel = d->render_2d();
+                if (!show_blocking_modal) nav2_panel = d->render_2d();
+                break;
+            }
+        }
+    }
+
+    if (teleop_active) {
+        has_right_content = true;
+        std::lock_guard<std::recursive_mutex> lock(displays_mutex_);
+        for (auto& d : displays_) {
+            if (d->getName() == "Teleop") {
+                if (!show_blocking_modal) teleop_panel = d->render_2d();
                 break;
             }
         }
@@ -430,18 +443,18 @@ Element Visualizer::render_frame() {
         std::lock_guard<std::recursive_mutex> lock(displays_mutex_);
         if (plugin_idx_ >= 0 && plugin_idx_ < (int)displays_.size()) {
             auto disp = displays_[plugin_idx_];
-            if (disp->getName() != "Image" && disp->getName() != "Nav2" && disp->isAdded() && disp->isEnabled()) {
+            if (disp->getName() != "Image" && disp->getName() != "Nav2" && disp->getName() != "Teleop" && disp->isAdded() && disp->isEnabled()) {
                 has_right_content = true;
-                if (!show_any_modal) {
-                    config_panel = disp->render_2d(nav2_active, config_scroll_);
+                if (!show_blocking_modal) {
+                    config_panel = disp->render_2d(nav2_active || teleop_active, config_scroll_);
                     config_active = true;
                 }
             }
         }
     }
 
-    if (!show_any_modal && has_right_content) right_width = 64;
-    if (!show_any_modal && terminal.dimx < 120) right_width = std::min(right_width, terminal.dimx / 3);
+    if (!show_blocking_modal && has_right_content) right_width = 64;
+    if (!show_blocking_modal && terminal.dimx < 120) right_width = std::min(right_width, terminal.dimx / 3);
 
     const int target_height = std::max(10, terminal.dimy - 8);
     const int target_width = std::max(10, terminal.dimx - left_width - right_width - 6);
@@ -564,7 +577,7 @@ Element Visualizer::render_frame() {
             text(" [SAVE] ") | (is_save_mode_ && show_file_modal_ ? inverted : nothing) | color(Color::Green),
             text(" [LOAD] ") | (!is_save_mode_ && show_file_modal_ ? inverted : nothing) | color(Color::Cyan),
             filler(),
-            text(" [P] Plugins | [F] Frame | [V] Tool | [R] Reset | [M] TopDown | [G] Grid | [Tab] Select | [Space] Toggle | [Q] Quit ") | dim
+            text(" [P] Plugins | [F] Frame | [V] Tool | [R] Reset | [M] TopDown | [G] Grid | [Tab] Select | [Space] Toggle | [Esc] Quit ") | dim
         }),
         separator(),
         hbox({
@@ -615,13 +628,13 @@ Element Visualizer::render_frame() {
                     }
                 }
                 auto view = dbox(std::move(label_elements)) | center | flex | border;
-                if (show_any_modal) view = view | color(Color::Black) | bgcolor(Color::Black);
+                if (show_blocking_modal) view = view | color(Color::Black) | bgcolor(Color::Black);
                 return view;
                 }(),
                 vbox({ 
-                (show_any_modal ? (filler() | bgcolor(Color::Black) | color(Color::Black)) : image_panel) | flex, 
-                (show_any_modal ? (filler() | size(HEIGHT, EQUAL, 14) | bgcolor(Color::Black) | color(Color::Black)) : 
-                    (config_active ? config_panel : (nav2_active ? nav2_panel : filler()))) 
+                (show_topic_modal_ || show_config_modal_ ? (filler() | bgcolor(Color::Black)) : image_panel) | flex, 
+                (show_topic_modal_ || show_config_modal_ ? (filler() | size(HEIGHT, EQUAL, 14) | bgcolor(Color::Black)) : 
+                    (config_active ? config_panel : (teleop_active ? teleop_panel : (nav2_active ? nav2_panel : filler())))) 
                 }) | size(WIDTH, EQUAL, right_width),
                 }) | flex
                 });
@@ -683,7 +696,7 @@ Element Visualizer::render_frame() {
         {
             std::lock_guard<std::recursive_mutex> lock(displays_mutex_);
             for (size_t i = 0; i < displays_.size(); ++i) {
-                bool is_panel = (displays_[i]->getName() == "Nav2");
+                bool is_panel = (displays_[i]->getName() == "Nav2" || displays_[i]->getName() == "Teleop");
                 if (modal_tab_idx_ == 0 && !is_panel) filtered_indices.push_back(i);
                 else if (modal_tab_idx_ == 1 && is_panel) filtered_indices.push_back(i);
             }
@@ -1014,7 +1027,7 @@ bool Visualizer::handle_event(Event event, int mouse_dx) {
         {
             std::lock_guard<std::recursive_mutex> lock(displays_mutex_);
             for (size_t i = 0; i < displays_.size(); ++i) {
-                bool is_panel = (displays_[i]->getName() == "Nav2");
+                bool is_panel = (displays_[i]->getName() == "Nav2" || displays_[i]->getName() == "Teleop");
                 if (modal_tab_idx_ == 0 && !is_panel) filtered_indices.push_back(i);
                 else if (modal_tab_idx_ == 1 && is_panel) filtered_indices.push_back(i);
             }
@@ -1577,6 +1590,15 @@ bool Visualizer::handle_event(Event event, int mouse_dx) {
 
     {
         std::lock_guard<std::recursive_mutex> lock(displays_mutex_);
+        for (auto& d : displays_) {
+            if (d->getName() == "Teleop" && d->isAdded() && d->isEnabled()) {
+                if (d->handle_event(event)) return true;
+            }
+        }
+    }
+
+    {
+        std::lock_guard<std::recursive_mutex> lock(displays_mutex_);
         if (plugin_idx_ >= 0 && plugin_idx_ < (int)displays_.size()) {
             if (displays_[plugin_idx_]->handle_event(event)) return true;
         }
@@ -1682,7 +1704,7 @@ bool Visualizer::handle_event(Event event, int mouse_dx) {
             } else if (!available_topics_.empty()) { disp->setTopic(available_topics_[topic_idx_]); return true; }
         }
     }
-    if (event == Event::Character('q') || event == Event::Escape) { quit_flag_ = true; screen_.Exit(); return true; }
+    if (event == Event::Escape) { quit_flag_ = true; screen_.Exit(); return true; }
     return false;
 }
 
