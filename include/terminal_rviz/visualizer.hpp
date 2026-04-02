@@ -124,6 +124,7 @@ private:
     // File Browser
     bool show_file_modal_ = false;
     bool is_save_mode_ = false;
+    bool is_dir_picker_ = false;
     std::filesystem::path current_path_ = std::filesystem::current_path();
     std::vector<std::filesystem::directory_entry> file_list_;
     int file_selected_idx_ = 0;

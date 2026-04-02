@@ -4,6 +4,7 @@
 #include "terminal_rviz/displays/image_display.hpp"
 #include "terminal_rviz/displays/nav2_display.hpp"
 #include "terminal_rviz/displays/map_display.hpp"
+#include "terminal_rviz/displays/rosbag_display.hpp"
 #if __has_include(<tf2_geometry_msgs/tf2_geometry_msgs.hpp>)
 #include <tf2_geometry_msgs/tf2_geometry_msgs.hpp>
 #else
@@ -384,15 +385,17 @@ void Visualizer::discover_topics() {
 
 Element Visualizer::render_frame() {
     auto terminal = ftxui::Terminal::Size();
-    Element image_panel = filler(), nav2_panel = filler(), teleop_panel = filler(), config_panel = filler();
+    Element image_panel = filler(), nav2_panel = filler(), teleop_panel = filler(), rosbag_panel = filler(), config_panel = filler();
     bool nav2_active = false;
     bool teleop_active = false;
+    bool rosbag_active = false;
 
     {
         std::lock_guard<std::recursive_mutex> lock(displays_mutex_);
         for (auto& d : displays_) {
             if (d->getName() == "Nav2" && d->isAdded() && d->isEnabled()) nav2_active = true;
             if (d->getName() == "Teleop" && d->isAdded() && d->isEnabled()) teleop_active = true;
+            if (d->getName() == "Rosbag" && d->isAdded() && d->isEnabled()) rosbag_active = true;
         }
     }
 
@@ -438,15 +441,26 @@ Element Visualizer::render_frame() {
         }
     }
 
+    if (rosbag_active) {
+        has_right_content = true;
+        std::lock_guard<std::recursive_mutex> lock(displays_mutex_);
+        for (auto& d : displays_) {
+            if (d->getName() == "Rosbag") {
+                if (!show_blocking_modal) rosbag_panel = d->render_2d(nav2_active || teleop_active, config_scroll_);
+                break;
+            }
+        }
+    }
+
     bool config_active = false;
     {
         std::lock_guard<std::recursive_mutex> lock(displays_mutex_);
         if (plugin_idx_ >= 0 && plugin_idx_ < (int)displays_.size()) {
             auto disp = displays_[plugin_idx_];
-            if (disp->getName() != "Image" && disp->getName() != "Nav2" && disp->getName() != "Teleop" && disp->isAdded() && disp->isEnabled()) {
+            if (disp->getName() != "Image" && disp->getName() != "Nav2" && disp->getName() != "Teleop" && disp->getName() != "Rosbag" && disp->isAdded() && disp->isEnabled()) {
                 has_right_content = true;
                 if (!show_blocking_modal) {
-                    config_panel = disp->render_2d(nav2_active || teleop_active, config_scroll_);
+                    config_panel = disp->render_2d(nav2_active || teleop_active || rosbag_active, config_scroll_);
                     config_active = true;
                 }
             }
@@ -634,7 +648,7 @@ Element Visualizer::render_frame() {
                 vbox({ 
                 (show_topic_modal_ || show_config_modal_ ? (filler() | bgcolor(Color::Black)) : image_panel) | flex, 
                 (show_topic_modal_ || show_config_modal_ ? (filler() | size(HEIGHT, EQUAL, 14) | bgcolor(Color::Black)) : 
-                    (config_active ? config_panel : (teleop_active ? teleop_panel : (nav2_active ? nav2_panel : filler())))) 
+                    (config_active ? config_panel : (rosbag_active ? rosbag_panel : (teleop_active ? teleop_panel : (nav2_active ? nav2_panel : filler()))))) 
                 }) | size(WIDTH, EQUAL, right_width),
                 }) | flex
                 });
@@ -663,7 +677,7 @@ Element Visualizer::render_frame() {
             items.push_back(t);
         }
 
-        auto save_load_btn = text(" [ SAVE ] ");
+        auto save_load_btn = text(is_dir_picker_ ? " [ SELECT ] " : " [ SAVE ] ");
         if (file_selected_idx_ == count) save_load_btn = save_load_btn | inverted | color(Color::Green) | focus;
 
         auto cancel_btn = text(" [ CANCEL ] ");
@@ -671,12 +685,16 @@ Element Visualizer::render_frame() {
 
         Elements button_row;
         button_row.push_back(filler());
-        if (is_save_mode_) button_row.push_back(save_load_btn);
+        if (is_save_mode_ || is_dir_picker_) button_row.push_back(save_load_btn);
         button_row.push_back(cancel_btn);
         button_row.push_back(filler());
 
+        int current_modal_h = is_save_mode_ ? 27 : 24;
+        std::string title = is_save_mode_ ? " SAVE CONFIG " : (is_dir_picker_ ? " SELECT DIRECTORY " : " LOAD CONFIG ");
+        Color title_color = is_save_mode_ ? Color::Green : (is_dir_picker_ ? Color::Yellow : Color::Cyan);
+
         Elements modal_content;
-        modal_content.push_back(text(is_save_mode_ ? " SAVE CONFIG " : " LOAD CONFIG ") | bold | hcenter | color(is_save_mode_ ? Color::Green : Color::Cyan));
+        modal_content.push_back(text(title) | bold | hcenter | color(title_color));
         modal_content.push_back(text(" Path: " + current_path_.string()) | dim | size(WIDTH, EQUAL, 60));
         modal_content.push_back(separator());
         modal_content.push_back(vbox(std::move(items)) | size(HEIGHT, EQUAL, max_visible + 1) | border);
@@ -685,8 +703,10 @@ Element Visualizer::render_frame() {
         }
         modal_content.push_back(hbox(std::move(button_row)));
 
-        int current_modal_h = is_save_mode_ ? 27 : 24;
-        modal_box = vbox(std::move(modal_content)) | border | bgcolor(Color::Black) | size(WIDTH, EQUAL, 64) | size(HEIGHT, EQUAL, current_modal_h) | center;
+        modal_box = dbox({
+            filler() | bgcolor(Color::Black),
+            vbox(std::move(modal_content)) | border
+        }) | size(WIDTH, EQUAL, 64) | size(HEIGHT, EQUAL, current_modal_h) | center;
     } else if (show_plugin_modal_) {
         Elements modal_items;
         int max_visible = 15;
@@ -696,7 +716,7 @@ Element Visualizer::render_frame() {
         {
             std::lock_guard<std::recursive_mutex> lock(displays_mutex_);
             for (size_t i = 0; i < displays_.size(); ++i) {
-                bool is_panel = (displays_[i]->getName() == "Nav2" || displays_[i]->getName() == "Teleop");
+                bool is_panel = (displays_[i]->getName() == "Nav2" || displays_[i]->getName() == "Teleop" || displays_[i]->getName() == "Rosbag");
                 if (modal_tab_idx_ == 0 && !is_panel) filtered_indices.push_back(i);
                 else if (modal_tab_idx_ == 1 && is_panel) filtered_indices.push_back(i);
             }
@@ -773,7 +793,6 @@ Element Visualizer::render_frame() {
             })
         }) | size(WIDTH, EQUAL, 50) | border | bgcolor(Color::Black) | center;
     } else if (show_frame_modal_) {
-        show_any_modal = true;
         Elements modal_items;
         int max_visible = 15;
         int frame_count = (int)available_frames_.size();
@@ -804,7 +823,6 @@ Element Visualizer::render_frame() {
             })
         }) | size(WIDTH, GREATER_THAN, 40) | border | bgcolor(Color::Black) | center;
     } else if (show_topic_modal_) {
-        show_any_modal = true;
         Elements modal_items;
         int max_visible = 15;
         int topic_count = (int)topic_modal_list_.size();
@@ -909,18 +927,33 @@ bool Visualizer::handle_event(Event event, int mouse_dx) {
         if (event == Event::ArrowUp) { file_selected_idx_ = std::max(-1, file_selected_idx_ - 1); return true; }
         if (event == Event::ArrowDown) { file_selected_idx_ = std::min(count + 1, file_selected_idx_ + 1); return true; }
         
-        if (trigger_return || event == Event::Return || (!is_save_mode_ && event == Event::Character(' '))) {
+        if (trigger_return || event == Event::Return || (!is_save_mode_ && !is_dir_picker_ && event == Event::Character(' '))) {
             if (file_selected_idx_ == count + 1) { // CANCEL
                 show_file_modal_ = false;
-            } else if (is_save_mode_ && (event == Event::Return || file_selected_idx_ == count)) {
-                // SAVE (Always save on Enter unless Cancel is selected)
-                if (!input_filename_.empty()) {
-                    std::string full_path = (current_path_ / input_filename_).string();
-                    if (full_path.find(".nathan") == std::string::npos) full_path += ".nathan";
-                    save_config(full_path);
+                is_dir_picker_ = false;
+            } else if ((is_save_mode_ || is_dir_picker_) && (event == Event::Return || file_selected_idx_ == count)) {
+                // SAVE or DIRECTORY PICK
+                if (is_save_mode_) {
+                    if (!input_filename_.empty()) {
+                        std::string full_path = (current_path_ / input_filename_).string();
+                        if (full_path.find(".nathan") == std::string::npos) full_path += ".nathan";
+                        save_config(full_path);
+                        show_file_modal_ = false;
+                    }
+                } else if (is_dir_picker_) {
+                    std::lock_guard<std::recursive_mutex> lock(displays_mutex_);
+                    for (auto& d : displays_) {
+                        if (d->getName() == "Rosbag") {
+                            auto rosbag = std::dynamic_pointer_cast<RosbagDisplay>(d);
+                            if (rosbag) rosbag->set_output_path(current_path_.string());
+                            break;
+                        }
+                    }
                     show_file_modal_ = false;
+                    is_dir_picker_ = false;
                 }
-            } else if (file_selected_idx_ == -1) { // Up one level
+            } else if (file_selected_idx_ == -1) { 
+ // Up one level
                 current_path_ = current_path_.parent_path();
                 refresh_file_list();
                 file_selected_idx_ = 0;
@@ -1027,7 +1060,7 @@ bool Visualizer::handle_event(Event event, int mouse_dx) {
         {
             std::lock_guard<std::recursive_mutex> lock(displays_mutex_);
             for (size_t i = 0; i < displays_.size(); ++i) {
-                bool is_panel = (displays_[i]->getName() == "Nav2" || displays_[i]->getName() == "Teleop");
+                bool is_panel = (displays_[i]->getName() == "Nav2" || displays_[i]->getName() == "Teleop" || displays_[i]->getName() == "Rosbag");
                 if (modal_tab_idx_ == 0 && !is_panel) filtered_indices.push_back(i);
                 else if (modal_tab_idx_ == 1 && is_panel) filtered_indices.push_back(i);
             }
@@ -1521,6 +1554,43 @@ bool Visualizer::handle_event(Event event, int mouse_dx) {
                     }
                 } else {
                     std::lock_guard<std::recursive_mutex> lock(displays_mutex_);
+                    
+                    std::shared_ptr<RosbagDisplay> rosbag = nullptr;
+                    for (auto& d : displays_) if (d->getName() == "Rosbag" && d->isAdded() && d->isEnabled()) { rosbag = std::dynamic_pointer_cast<RosbagDisplay>(d); break; }
+
+                    if (rosbag) {
+                        int cry = mouse.y - (terminal.dimy - 14);
+                        if (mouse.button == Mouse::WheelUp)   { config_scroll_ = std::max(0, config_scroll_ - 1); screen_.PostEvent(Event::Custom); return true; }
+                        if (mouse.button == Mouse::WheelDown) { config_scroll_++; screen_.PostEvent(Event::Custom); return true; }
+
+                        if (mouse.button == Mouse::Left && mouse.motion == Mouse::Pressed) {
+                            if (cry == 2) { // Output Path change
+                                show_file_modal_ = true;
+                                is_dir_picker_ = true;
+                                refresh_file_list();
+                                screen_.PostEvent(Event::Custom);
+                                return true;
+                            } else if (cry >= 4 && cry <= 8) { // Topic list (scrolled)
+                                auto topic_names = node_->get_topic_names_and_types();
+                                std::vector<std::string> sorted_topics;
+                                for (auto const& [name, types] : topic_names) sorted_topics.push_back(name);
+                                std::sort(sorted_topics.begin(), sorted_topics.end());
+                                int idx = cry - 4 + config_scroll_;
+                                if (idx >= 0 && idx < (int)sorted_topics.size()) {
+                                    rosbag->toggle_topic(sorted_topics[idx]);
+                                    screen_.PostEvent(Event::Custom);
+                                    return true;
+                                }
+                            } else if (cry == 10 || cry == 11 || cry == 12) { // Buttons row (accounting for border/padding)
+                                int rx = mouse.x - (terminal.dimx - right_width_ - 1);
+                                if (rx < right_width_ / 2) rosbag->start_recording();
+                                else rosbag->stop_recording();
+                                screen_.PostEvent(Event::Custom);
+                                return true;
+                            }
+                        }
+                    }
+
                     if (plugin_idx_ >= 0 && plugin_idx_ < (int)displays_.size()) {
                         auto disp = displays_[plugin_idx_];
                         if (disp->isAdded() && disp->isEnabled()) {

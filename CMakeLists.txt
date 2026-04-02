@@ -75,6 +75,7 @@ add_library(${PROJECT_NAME}_core
   src/displays/range_display.cpp
   src/displays/relative_humidity_display.cpp
   src/displays/robot_model_display.cpp
+  src/displays/rosbag_display.cpp
   src/displays/teleop_display.cpp
   src/displays/temperature_display.cpp
   src/displays/tf_display.cpp
