@@ -7,6 +7,7 @@
 #include <string>
 #include "ftxui/screen/color.hpp"
 #include "ftxui/dom/canvas.hpp"
+#include <tf2/LinearMath/Transform.h>
 
 namespace terminal_rviz {
 
@@ -46,6 +47,12 @@ public:
     void plot(int x, int y, float z, uint8_t r, uint8_t g, uint8_t b, float alpha = 1.0f);
     void finish(ftxui::Canvas& canvas);
 
+    struct Dot {
+        float z = 1000.0f;
+        uint8_t r = 255, g = 255, b = 255;
+        float alpha = 1.0f;
+    };
+
     struct Label {
         float x, y, z;
         std::string text;
@@ -57,6 +64,26 @@ public:
     const std::vector<Label>& get_labels() const { return labels_; }
 
     bool project(float dx, float dy, float dz, int& out_sx, int& out_sy, float& out_z) const;
+    
+    struct Projector {
+        float m[3][4];
+        float zoom;
+        int width, height;
+        inline bool project(float x, float y, float z, int& sx, int& sy, float& sz) const {
+            sz = m[2][0] * x + m[2][1] * y + m[2][2] * z + m[2][3];
+            if (sz > 0.1f) {
+                float px = m[0][0] * x + m[0][1] * y + m[0][2] * z + m[0][3];
+                float py = m[1][0] * x + m[1][1] * y + m[1][2] * z + m[1][3];
+                float z_inv = zoom / sz;
+                sx = (width / 2) + static_cast<int>(px * z_inv);
+                sy = (height / 2) + static_cast<int>(py * z_inv);
+                return true;
+            }
+            return false;
+        }
+    };
+    Projector get_projector(const tf2::Transform& world_to_object) const;
+
     bool pick_ground_plane(int sx, int sy, float& out_x, float& out_y) const;
 
     int get_width() const { return width_; }
@@ -70,15 +97,17 @@ private:
     float cx_ = 0.0f, cy_ = 0.0f, cz_ = 0.0f;
     float global_alpha_ = 1.0f;
 
+    // Pre-calculated rotation matrix
+    float m00_, m01_, m02_;
+    float m10_, m11_, m12_;
+    float m20_, m21_, m22_;
+
     std::vector<Label> labels_;
-    std::vector<float> z_buffer_;
-    std::vector<uint8_t> r_buffer_;
-    std::vector<uint8_t> g_buffer_;
-    std::vector<uint8_t> b_buffer_;
-    std::vector<float> dot_alphas_;
+    std::vector<Dot> dot_buffer_;
     std::vector<float> char_z_buffer_;
     std::vector<ftxui::Color> char_colors_;
     std::vector<int> dirty_cells_;
+    std::vector<bool> is_dirty_;
 };
 
 } // namespace terminal_rviz

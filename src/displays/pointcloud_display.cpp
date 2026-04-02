@@ -95,6 +95,8 @@ void PointCloudDisplay::render(RvizRenderer& renderer, ftxui::Canvas& /*canvas*/
             tf2::fromMsg(transform_msg.transform, pc_to_world);
         } catch (...) { continue; }
 
+        auto projector = renderer.get_projector(pc_to_world);
+
         bool has_rgb = false;
         try {
             sensor_msgs::PointCloud2ConstIterator<uint8_t> test_rgb(*msg, "rgb");
@@ -148,7 +150,8 @@ void PointCloudDisplay::render(RvizRenderer& renderer, ftxui::Canvas& /*canvas*/
         }
 
         for (size_t i = 0; i < total_points; i += skip, iter_x += skip, iter_y += skip, iter_z += skip) {
-            tf2::Vector3 p_world = pc_to_world * tf2::Vector3(*iter_x, *iter_y, *iter_z);
+            int sx, sy; float sz;
+            if (!projector.project(*iter_x, *iter_y, *iter_z, sx, sy, sz)) continue;
             
             uint8_t r_c = 255, g_c = 255, b_c = 255;
             
@@ -172,7 +175,12 @@ void PointCloudDisplay::render(RvizRenderer& renderer, ftxui::Canvas& /*canvas*/
                 else { r_c = 0; g_c = static_cast<uint8_t>((1.0f - v) * 1020); b_c = 255; }
             }
 
-            render_styled_point(renderer, p_world.x(), p_world.y(), p_world.z(), cfg, r_c, g_c, b_c);
+            if (cfg.style == "Points") {
+                renderer.plot(sx, sy, sz, r_c, g_c, b_c, cfg.alpha);
+            } else {
+                tf2::Vector3 p_world = pc_to_world * tf2::Vector3(*iter_x, *iter_y, *iter_z);
+                render_styled_point(renderer, p_world.x(), p_world.y(), p_world.z(), cfg, r_c, g_c, b_c);
+            }
         }
     }
 }

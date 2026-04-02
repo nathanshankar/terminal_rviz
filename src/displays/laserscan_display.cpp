@@ -82,6 +82,10 @@ void LaserScanDisplay::render(RvizRenderer& renderer, ftxui::Canvas&, const std:
             tf2::fromMsg(t_msg.transform, frame_to_world);
         } catch (...) { continue; }
 
+        auto projector = renderer.get_projector(frame_to_world);
+        const tf2::Matrix3x3& rot = frame_to_world.getBasis();
+        const tf2::Vector3& trans = frame_to_world.getOrigin();
+
         uint8_t r_b = 255, g_b = 255, b_b = 255;
         if (cfg.color_style == "Flat") {
             static const uint8_t preset_r[] = {255, 255, 0,   0,   255, 0,   255, 255, 0,   255};
@@ -96,20 +100,33 @@ void LaserScanDisplay::render(RvizRenderer& renderer, ftxui::Canvas&, const std:
             if (r < msg->range_min || r > msg->range_max) continue;
             
             float angle = msg->angle_min + i * msg->angle_increment;
-            tf2::Vector3 p_local(r * std::cos(angle), r * std::sin(angle), 0);
-            tf2::Vector3 p_world = frame_to_world * p_local;
+            float lx = r * std::cos(angle);
+            float ly = r * std::sin(angle);
+
+            int sx, sy; float sz;
+            if (!projector.project(lx, ly, 0, sx, sy, sz)) continue;
             
             uint8_t r_c = r_b, g_c = g_b, b_c = b_b;
             if (cfg.color_style == "Axis") {
-                float val = (cfg.axis == "X") ? p_world.x() : ((cfg.axis == "Y") ? p_world.y() : p_world.z());
-                float v = std::clamp((val + 2.0f) / 4.0f, 0.0f, 1.0f); // Default 4m range for axis coloring
+                float wx = rot[0][0] * lx + rot[0][1] * ly + trans.x();
+                float wy = rot[1][0] * lx + rot[1][1] * ly + trans.y();
+                float wz = rot[2][0] * lx + rot[2][1] * ly + trans.z();
+                float val = (cfg.axis == "X") ? wx : ((cfg.axis == "Y") ? wy : wz);
+                float v = std::clamp((val + 2.0f) / 4.0f, 0.0f, 1.0f);
                 if (v < 0.25f) { r_c = 255; g_c = static_cast<uint8_t>(v * 1020); b_c = 0; }
                 else if (v < 0.5f) { r_c = static_cast<uint8_t>((0.5f - v) * 1020); g_c = 255; b_c = 0; }
                 else if (v < 0.75f) { r_c = 0; g_c = 255; b_c = static_cast<uint8_t>((v - 0.5f) * 1020); }
                 else { r_c = 0; g_c = static_cast<uint8_t>((1.0f - v) * 1020); b_c = 255; }
             }
 
-            render_styled_point(renderer, p_world.x(), p_world.y(), p_world.z(), cfg, r_c, g_c, b_c);
+            if (cfg.style == "Points") {
+                renderer.plot(sx, sy, sz, r_c, g_c, b_c, cfg.alpha);
+            } else {
+                float wx = rot[0][0] * lx + rot[0][1] * ly + trans.x();
+                float wy = rot[1][0] * lx + rot[1][1] * ly + trans.y();
+                float wz = rot[2][0] * lx + rot[2][1] * ly + trans.z();
+                render_styled_point(renderer, wx, wy, wz, cfg, r_c, g_c, b_c);
+            }
         }
     }
 }

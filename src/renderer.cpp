@@ -9,31 +9,50 @@ void RvizRenderer::set_size(int width, int height) {
     if (width_ != width || height_ != height) {
         width_ = width;
         height_ = height;
-        z_buffer_.assign(width_ * height_, 1000.0f);
-        r_buffer_.assign(width_ * height_, 255);
-        g_buffer_.assign(width_ * height_, 255);
-        b_buffer_.assign(width_ * height_, 255);
-        dot_alphas_.assign(width_ * height_, 1.0f);
+        dot_buffer_.assign(width_ * height_, Dot());
         char_z_buffer_.assign((width_ / 2) * (height_ / 4), 1000.0f);
         char_colors_.assign((width_ / 2) * (height_ / 4), ftxui::Color::White);
+        is_dirty_.assign((width_ / 2) * (height_ / 4), false);
         dirty_cells_.clear();
     }
 }
 
 void RvizRenderer::set_camera(float yaw, float pitch, float roll, float dist, float cx, float cy, float cz) {
     yaw_ = yaw; pitch_ = pitch; roll_ = roll; dist_ = dist; cx_ = cx; cy_ = cy; cz_ = cz;
+    
+    float s_y = std::sin(yaw_), c_y = std::cos(yaw_);
+    float s_p = std::sin(pitch_), c_p = std::cos(pitch_);
+    float s_r = std::sin(roll_), c_r = std::cos(roll_);
+
+    // tx: rx=0, ry=0, rz=1
+    m00_ = s_y * c_r + c_y * s_p * s_r;
+    m10_ = s_y * s_r - c_y * s_p * c_r;
+    m20_ = c_y * c_p;
+
+    // ty: rx=-1, ry=0, rz=0
+    m01_ = -c_y * c_r + s_y * s_p * s_r;
+    m11_ = -c_y * s_r - s_y * s_p * c_r;
+    m21_ = s_y * c_p;
+
+    // tz: rx=0, ry=-1, rz=0
+    m02_ = c_p * s_r;
+    m12_ = -c_p * c_r;
+    m22_ = -s_p;
 }
 
 void RvizRenderer::clear() {
     labels_.clear();
+    int cw = width_ / 2;
     for (int idx : dirty_cells_) {
         char_z_buffer_[idx] = 1000.0f;
-        int cw = width_ / 2;
+        is_dirty_[idx] = false;
         int cx = idx % cw, cy = idx / cw;
+        int py_base = cy * 4;
+        int px_base = cx * 2;
         for (int dy = 0; dy < 4; ++dy) {
-            for (int dx = 0; dx < 2; ++dx) {
-                z_buffer_[(cy * 4 + dy) * width_ + (cx * 2 + dx)] = 1000.0f;
-            }
+            int row_offset = (py_base + dy) * width_;
+            dot_buffer_[row_offset + px_base].z = 1000.0f;
+            dot_buffer_[row_offset + px_base + 1].z = 1000.0f;
         }
     }
     dirty_cells_.clear();
@@ -41,15 +60,11 @@ void RvizRenderer::clear() {
 
 bool RvizRenderer::project(float dx, float dy, float dz, int& out_sx, int& out_sy, float& out_z) const {
     float tx = dx - cx_, ty = dy - cy_, tz = dz - cz_;
-    float rx = -ty, ry = -tz, rz = tx;
-    float s_yaw = std::sin(yaw_), c_yaw = std::cos(yaw_);
-    float s_pitch = std::sin(pitch_), c_pitch = std::cos(pitch_);
-    float s_roll = std::sin(roll_), c_roll = std::cos(roll_);
-    float x1 = rx * c_yaw + rz * s_yaw, z1 = -rx * s_yaw + rz * c_yaw;
-    float y2 = ry * c_pitch - z1 * s_pitch, z2 = ry * s_pitch + z1 * c_pitch;
-    float x3 = x1 * c_roll - y2 * s_roll, y3 = x1 * s_roll + y2 * c_roll;
-    out_z = z2 + dist_;
+    
+    out_z = m20_ * tx + m21_ * ty + m22_ * tz + dist_;
     if (out_z > 0.1f) {
+        float x3 = m00_ * tx + m01_ * ty + m02_ * tz;
+        float y3 = m10_ * tx + m11_ * ty + m12_ * tz;
         float z_inv = zoom_ / out_z;
         out_sx = (width_ / 2) + static_cast<int>(x3 * z_inv);
         out_sy = (height_ / 2) + static_cast<int>(y3 * z_inv);
@@ -59,7 +74,6 @@ bool RvizRenderer::project(float dx, float dy, float dz, int& out_sx, int& out_s
 }
 
 void RvizRenderer::plot(int x, int y, float z, ftxui::Color /*color*/, float alpha) {
-    // Basic plot with default white color if only Color is provided
     plot(x, y, z, 255, 255, 255, alpha);
 }
 
@@ -68,17 +82,23 @@ void RvizRenderer::plot(int x, int y, float z, uint8_t r, uint8_t g, uint8_t b, 
     float final_alpha = alpha * global_alpha_;
     if (final_alpha < 0.1f) return;
     int idx = y * width_ + x;
-    if (z < z_buffer_[idx]) {
-        z_buffer_[idx] = z;
-        r_buffer_[idx] = r;
-        g_buffer_[idx] = g;
-        b_buffer_[idx] = b;
-        dot_alphas_[idx] = final_alpha;
+    Dot& dot = dot_buffer_[idx];
+    if (z < dot.z) {
+        dot.z = z;
+        dot.r = r;
+        dot.g = g;
+        dot.b = b;
+        dot.alpha = final_alpha;
+        
         int cx = x / 2, cy = y / 4;
         int cw = width_ / 2;
         int c_idx = cy * cw + cx;
+        
         if (z < char_z_buffer_[c_idx]) {
-            if (char_z_buffer_[c_idx] >= 1000.0f) dirty_cells_.push_back(c_idx);
+            if (!is_dirty_[c_idx]) {
+                dirty_cells_.push_back(c_idx);
+                is_dirty_[c_idx] = true;
+            }
             char_z_buffer_[c_idx] = z;
             char_colors_[c_idx] = ftxui::Color::RGB(static_cast<uint8_t>(r * final_alpha), 
                                                    static_cast<uint8_t>(g * final_alpha), 
@@ -215,20 +235,61 @@ void RvizRenderer::finish(ftxui::Canvas& canvas) {
     int cw = width_ / 2;
     for (int c_idx : dirty_cells_) {
         int cx = c_idx % cw, cy = c_idx / cw;
+        int py_base = cy * 4;
+        int px_base = cx * 2;
         for (int dy = 0; dy < 4; ++dy) {
+            int py = py_base + dy;
+            int row_offset = py * width_;
             for (int dx = 0; dx < 2; ++dx) {
-                int px = cx * 2 + dx, py = cy * 4 + dy;
-                int p_idx = py * width_ + px;
-                if (z_buffer_[p_idx] < 1000.0f) {
-                    float a = dot_alphas_[p_idx];
-                    uint8_t r = static_cast<uint8_t>(r_buffer_[p_idx] * a);
-                    uint8_t g = static_cast<uint8_t>(g_buffer_[p_idx] * a);
-                    uint8_t b = static_cast<uint8_t>(b_buffer_[p_idx] * a);
+                int px = px_base + dx;
+                const Dot& dot = dot_buffer_[row_offset + px];
+                if (dot.z < 1000.0f) {
+                    uint8_t r = static_cast<uint8_t>(dot.r * dot.alpha);
+                    uint8_t g = static_cast<uint8_t>(dot.g * dot.alpha);
+                    uint8_t b = static_cast<uint8_t>(dot.b * dot.alpha);
                     canvas.DrawPoint(px, py, true, ftxui::Color::RGB(r, g, b));
                 }
             }
         }
     }
+}
+
+RvizRenderer::Projector RvizRenderer::get_projector(const tf2::Transform& world_to_object) const {
+    Projector p;
+    p.zoom = zoom_;
+    p.width = width_;
+    p.height = height_;
+
+    // M_view row 0: m00, m01, m02, -(m00*cx + m01*cy + m02*cz)
+    // M_view row 1: m10, m11, m12, -(m10*cx + m11*cy + m12*cz)
+    // M_view row 2: m20, m21, m22, -(m20*cx + m21*cy + m22*cz) + dist
+    
+    float v03 = -(m00_ * cx_ + m01_ * cy_ + m02_ * cz_);
+    float v13 = -(m10_ * cx_ + m11_ * cy_ + m12_ * cz_);
+    float v23 = -(m20_ * cx_ + m21_ * cy_ + m22_ * cz_) + dist_;
+
+    tf2::Matrix3x3 rot = world_to_object.getBasis();
+    tf2::Vector3 trans = world_to_object.getOrigin();
+
+    // Combined matrix = M_view * world_to_object
+    // [ m00 m01 m02 v03 ]   [ r00 r01 r02 t0 ]
+    // [ m10 m11 m12 v13 ] * [ r10 r11 r12 t1 ]
+    // [ m20 m21 m22 v23 ]   [ r20 r21 r22 t2 ]
+    //                       [  0   0   0   1 ]
+    
+    for (int i = 0; i < 3; ++i) {
+        float m_row_i[3];
+        float v_i3;
+        if (i == 0) { m_row_i[0] = m00_; m_row_i[1] = m01_; m_row_i[2] = m02_; v_i3 = v03; }
+        else if (i == 1) { m_row_i[0] = m10_; m_row_i[1] = m11_; m_row_i[2] = m12_; v_i3 = v13; }
+        else { m_row_i[0] = m20_; m_row_i[1] = m21_; m_row_i[2] = m22_; v_i3 = v23; }
+
+        for (int j = 0; j < 3; ++j) {
+            p.m[i][j] = m_row_i[0] * rot[0][j] + m_row_i[1] * rot[1][j] + m_row_i[2] * rot[2][j];
+        }
+        p.m[i][3] = m_row_i[0] * trans.x() + m_row_i[1] * trans.y() + m_row_i[2] * trans.z() + v_i3;
+    }
+    return p;
 }
 
 bool RvizRenderer::pick_ground_plane(int sx, int sy, float& out_x, float& out_y) const {
