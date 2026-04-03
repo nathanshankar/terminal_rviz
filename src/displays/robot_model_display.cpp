@@ -89,7 +89,14 @@ std::shared_ptr<Mesh> RobotModelDisplay::get_or_load_mesh(const std::string& uri
     const aiScene* scene = importer.ReadFile(path, aiProcess_Triangulate | aiProcess_OptimizeMeshes | aiProcess_JoinIdenticalVertices);
     if (!scene || !scene->HasMeshes()) return nullptr;
     auto mesh_out = std::make_shared<Mesh>();
-    process_assimp_node(scene, scene->mRootNode, aiMatrix4x4(), mesh_out);
+    
+    aiMatrix4x4 root_transform; // Identity
+    // For DAE files, apply a corrective rotation to account for the Y-up to Z-up convention difference.
+    if (uri.find(".dae") != std::string::npos) {
+        aiMatrix4x4::RotationX(M_PI / 2.f, root_transform);
+    }
+    
+    process_assimp_node(scene, scene->mRootNode, root_transform, mesh_out);
     mesh_cache_[uri] = mesh_out;
     return mesh_out;
 }
