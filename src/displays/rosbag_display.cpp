@@ -1,4 +1,7 @@
 #include "terminal_rviz/displays/rosbag_display.hpp"
+
+#ifdef HAS_ROSBAG2
+
 #include <unistd.h>
 #include <sys/wait.h>
 #include <fcntl.h>
@@ -483,3 +486,5 @@ ftxui::Element RosbagDisplay::render_2d(bool /*nav2_active*/, int config_scroll)
 bool RosbagDisplay::handle_event(ftxui::Event, int) { return false; }
 
 } // namespace terminal_rviz
+
+#endif // HAS_ROSBAG2

@@ -28,7 +28,9 @@
 #include "terminal_rviz/displays/range_display.hpp"
 #include "terminal_rviz/displays/relative_humidity_display.hpp"
 #include "terminal_rviz/displays/robot_model_display.hpp"
+#ifdef HAS_ROSBAG2
 #include "terminal_rviz/displays/rosbag_display.hpp"
+#endif
 #include "terminal_rviz/displays/teleop_display.hpp"
 #include "terminal_rviz/displays/temperature_display.hpp"
 #include "terminal_rviz/displays/tf_display.hpp"
@@ -185,9 +187,11 @@ int main(int argc, char** argv) {
     visualizer->add_display(humidity);
 
     // Rosbag
+#ifdef HAS_ROSBAG2
     auto rosbag = std::make_shared<RosbagDisplay>(node);
     rosbag->onInitialize();
     visualizer->add_display(rosbag);
+#endif
 
     // RobotModel
     auto robot_model = std::make_shared<RobotModelDisplay>(node, visualizer->get_tf_buffer());

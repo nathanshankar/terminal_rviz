@@ -24,8 +24,19 @@ find_package(std_msgs REQUIRED)
 find_package(nav2_msgs REQUIRED)
 find_package(action_msgs REQUIRED)
 find_package(actionlib_msgs REQUIRED)
-find_package(rosbag2_interfaces REQUIRED)
-find_package(rosgraph_msgs REQUIRED)
+
+# rosbag2_interfaces and rosgraph_msgs are optional (missing in some older distros like Foxy)
+find_package(rosbag2_interfaces QUIET)
+find_package(rosgraph_msgs QUIET)
+
+if(rosbag2_interfaces_FOUND AND rosgraph_msgs_FOUND)
+  message(STATUS "rosbag2_interfaces and rosgraph_msgs found, enabling RosbagDisplay")
+  add_definitions(-DHAS_ROSBAG2)
+  set(ROSBAG2_DEPENDS rosbag2_interfaces rosgraph_msgs)
+else()
+  message(WARNING "rosbag2_interfaces or rosgraph_msgs NOT found, RosbagDisplay will be disabled")
+  set(ROSBAG2_DEPENDS "")
+endif()
 
 option(WITH_GPU "Build with OpenCL GPU support" ON)
 
@@ -112,8 +123,7 @@ ament_target_dependencies(${PROJECT_NAME}_core
   nav2_msgs
   action_msgs
   actionlib_msgs
-  rosbag2_interfaces
-  rosgraph_msgs
+  ${ROSBAG2_DEPENDS}
 )
 
 target_link_libraries(${PROJECT_NAME}_core
@@ -153,8 +163,7 @@ ament_target_dependencies(terminal_rviz_node
   nav2_msgs
   action_msgs
   actionlib_msgs
-  rosbag2_interfaces
-  rosgraph_msgs
+  ${ROSBAG2_DEPENDS}
 )
 
 target_link_libraries(terminal_rviz_node

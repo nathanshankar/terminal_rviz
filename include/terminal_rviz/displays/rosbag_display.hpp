@@ -1,6 +1,8 @@
 #ifndef TERMINAL_RVIZ_DISPLAYS_ROSBAG_DISPLAY_HPP_
 #define TERMINAL_RVIZ_DISPLAYS_ROSBAG_DISPLAY_HPP_
 
+#ifdef HAS_ROSBAG2
+
 #include <mutex>
 #include <string>
 #include <vector>
@@ -95,5 +97,7 @@ public:
 };
 
 } // namespace terminal_rviz
+
+#endif // HAS_ROSBAG2
 
 #endif // TERMINAL_RVIZ_DISPLAYS_ROSBAG_DISPLAY_HPP_

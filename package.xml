@@ -26,8 +26,8 @@
   <depend>nav2_msgs</depend>
   <depend>action_msgs</depend>
   <depend>actionlib_msgs</depend>
-  <depend>rosbag2_interfaces</depend>
-  <depend>rosgraph_msgs</depend>
+  <depend condition="$ROS_DISTRO != foxy">rosbag2_interfaces</depend>
+  <depend condition="$ROS_DISTRO != foxy">rosgraph_msgs</depend>
 
   <test_depend>ament_lint_auto</test_depend>
   <test_depend>ament_lint_common</test_depend>

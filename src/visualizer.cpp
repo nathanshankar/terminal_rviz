@@ -4,7 +4,9 @@
 #include "terminal_rviz/displays/image_display.hpp"
 #include "terminal_rviz/displays/nav2_display.hpp"
 #include "terminal_rviz/displays/map_display.hpp"
+#ifdef HAS_ROSBAG2
 #include "terminal_rviz/displays/rosbag_display.hpp"
+#endif
 #if __has_include(<tf2_geometry_msgs/tf2_geometry_msgs.hpp>)
 #include <tf2_geometry_msgs/tf2_geometry_msgs.hpp>
 #else
@@ -431,7 +433,9 @@ Element Visualizer::render_frame() {
         for (auto& d : displays_) {
             if (d->getName() == "Nav2" && d->isAdded() && d->isEnabled()) nav2_active = true;
             if (d->getName() == "Teleop" && d->isAdded() && d->isEnabled()) teleop_active = true;
+#ifdef HAS_ROSBAG2
             if (d->getName() == "Rosbag" && d->isAdded() && d->isEnabled()) rosbag_active = true;
+#endif
         }
     }
 
@@ -476,6 +480,7 @@ Element Visualizer::render_frame() {
         }
     }
 
+#ifdef HAS_ROSBAG2
     if (rosbag_active) {
         has_right_content = true;
         std::lock_guard<std::recursive_mutex> lock(displays_mutex_);
@@ -486,6 +491,7 @@ Element Visualizer::render_frame() {
             }
         }
     }
+#endif
 
     bool config_active = false;
     {
@@ -495,7 +501,11 @@ Element Visualizer::render_frame() {
             if (disp->getName() != "Image" && disp->getName() != "Nav2" && disp->getName() != "Teleop" && disp->getName() != "Rosbag" && disp->isAdded() && disp->isEnabled()) {
                 has_right_content = true;
                 if (!show_blocking_modal) {
-                    config_panel = disp->render_2d(nav2_active || teleop_active || rosbag_active, config_scroll_);
+                    config_panel = disp->render_2d(nav2_active || teleop_active 
+#ifdef HAS_ROSBAG2
+                        || rosbag_active
+#endif
+                        , config_scroll_);
                     config_active = true;
                 }
             }
@@ -683,7 +693,15 @@ Element Visualizer::render_frame() {
                 vbox({ 
                 (show_topic_modal_ || show_config_modal_ ? (filler() | bgcolor(Color::Black)) : image_panel) | flex, 
                 (show_topic_modal_ || show_config_modal_ ? (filler() | size(HEIGHT, EQUAL, 14) | bgcolor(Color::Black)) : 
-                    (config_active ? config_panel : (rosbag_active ? rosbag_panel : (teleop_active ? teleop_panel : (nav2_active ? nav2_panel : filler()))))) 
+                    (config_active ? config_panel : 
+#ifdef HAS_ROSBAG2
+                    (rosbag_active ? rosbag_panel : 
+#endif
+                    (teleop_active ? teleop_panel : (nav2_active ? nav2_panel : filler()))
+#ifdef HAS_ROSBAG2
+                    )
+#endif
+                    )) 
                 }) | size(WIDTH, EQUAL, right_width),
                 }) | flex
                 });
@@ -983,11 +1001,13 @@ bool Visualizer::handle_event(Event event, int mouse_dx) {
                     std::lock_guard<std::recursive_mutex> lock(displays_mutex_);
                     for (auto& d : displays_) {
                         if (d->getName() == "Rosbag") {
+#ifdef HAS_ROSBAG2
                             auto rosbag = std::dynamic_pointer_cast<RosbagDisplay>(d);
                             if (rosbag) {
                                 if (rosbag->get_tab() == 0) rosbag->set_output_path(current_path_.string());
                                 else rosbag->set_input_path(current_path_.string());
                             }
+#endif
                             break;
                         }
                     }
@@ -1427,8 +1447,10 @@ bool Visualizer::handle_event(Event event, int mouse_dx) {
                 std::lock_guard<std::recursive_mutex> lock(displays_mutex_);
                 for (auto& d : displays_) {
                     if (d->getName() == "Rosbag") {
+#ifdef HAS_ROSBAG2
                         auto rb = std::dynamic_pointer_cast<RosbagDisplay>(d);
                         if (rb) rb->finish_scrubbing();
+#endif
                         break;
                     }
                 }
@@ -1437,6 +1459,7 @@ bool Visualizer::handle_event(Event event, int mouse_dx) {
 
         if (is_dragging_seek_) {
             std::lock_guard<std::recursive_mutex> lock(displays_mutex_);
+#ifdef HAS_ROSBAG2
             std::shared_ptr<RosbagDisplay> rosbag = nullptr;
             for (auto& d : displays_) if (d->getName() == "Rosbag") { rosbag = std::dynamic_pointer_cast<RosbagDisplay>(d); break; }
             if (rosbag) {
@@ -1444,6 +1467,7 @@ bool Visualizer::handle_event(Event event, int mouse_dx) {
                 float progress = std::clamp(static_cast<float>(rx - 7) / (right_width_ - 15), 0.0f, 1.0f);
                 rosbag->seek(progress);
             }
+#endif
             screen_.PostEvent(Event::Custom);
             return true;
         }
@@ -1661,8 +1685,10 @@ bool Visualizer::handle_event(Event event, int mouse_dx) {
                         }
                     }
 
+#ifdef HAS_ROSBAG2
                     std::shared_ptr<RosbagDisplay> rosbag = nullptr;
                     for (auto& d : displays_) if (d->getName() == "Rosbag" && d->isAdded() && d->isEnabled()) { rosbag = std::dynamic_pointer_cast<RosbagDisplay>(d); break; }
+#endif
 
                     if (config_active) {
                         if (mouse.button == Mouse::WheelUp)   { config_scroll_ = std::max(0, config_scroll_ - 1); screen_.PostEvent(Event::Custom); return true; }
