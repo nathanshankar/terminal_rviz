@@ -1,168 +1,162 @@
 #include "terminal_rviz/displays/marker_display.hpp"
+#include "terminal_rviz/config_helper.hpp"
 #if __has_include(<tf2_geometry_msgs/tf2_geometry_msgs.hpp>)
 #include <tf2_geometry_msgs/tf2_geometry_msgs.hpp>
 #else
 #include <tf2_geometry_msgs/tf2_geometry_msgs.h>
 #endif
-#include <cmath>
+#include <algorithm>
 
 namespace terminal_rviz {
 
 MarkerDisplay::MarkerDisplay(rclcpp::Node::SharedPtr node)
-    : Display("Markers", node) {}
+    : Display("Marker", node) {}
 
-void MarkerDisplay::onInitialize() {
-    std::string default_topic = (preferred_type_ == "visualization_msgs/msg/MarkerArray") ? "marker_array" : "marker";
-    topic_ = node_->declare_parameter(name_ + ".topic", default_topic);
-    setTopic(topic_);
-}
+void MarkerDisplay::onInitialize() {}
 
 void MarkerDisplay::setTopic(const std::string& topic) {
-    try {
-        marker_sub_.reset();
-        marker_array_sub_.reset();
-        topic_ = topic;
-        
-        if (preferred_type_ == "visualization_msgs/msg/MarkerArray") {
-            marker_array_sub_ = node_->create_subscription<visualization_msgs::msg::MarkerArray>(
-                topic_, 10, std::bind(&MarkerDisplay::markerArrayCallback, this, std::placeholders::_1));
-        } else {
-            marker_sub_ = node_->create_subscription<visualization_msgs::msg::Marker>(
-                topic_, 10, std::bind(&MarkerDisplay::markerCallback, this, std::placeholders::_1));
-        }
-    } catch (const std::exception& e) {
-        RCLCPP_ERROR(node_->get_logger(), "Marker: Failed to subscribe to %s: %s", topic.c_str(), e.what());
-    }
-}
-
-void MarkerDisplay::markerCallback(const visualization_msgs::msg::Marker::SharedPtr msg) {
     std::lock_guard<std::mutex> lock(mtx_);
-    std::string key = msg->ns + "_" + std::to_string(msg->id);
-    if (msg->action == visualization_msgs::msg::Marker::DELETE) {
-        markers_.erase(key);
-    } else if (msg->action == visualization_msgs::msg::Marker::DELETEALL) {
-        markers_.clear();
+    auto it = std::find(enabled_topics_.begin(), enabled_topics_.end(), topic);
+    if (it != enabled_topics_.end()) {
+        enabled_topics_.erase(it);
+        marker_subs_.erase(topic);
+        marker_array_subs_.erase(topic);
+        marker_store_.erase(topic);
+        configs_.erase(topic);
+        return;
+    }
+    
+    enabled_topics_.push_back(topic);
+    TopicConfig cfg;
+    cfg.color_style = "Topic"; // Default to original marker colors
+    configs_[topic] = cfg;
+    
+    if (preferred_type_ == "visualization_msgs/msg/MarkerArray") {
+        marker_array_subs_[topic] = node_->create_subscription<visualization_msgs::msg::MarkerArray>(
+            topic, 10, [this, topic](const visualization_msgs::msg::MarkerArray::SharedPtr msg) {
+                std::lock_guard<std::mutex> lock(mtx_);
+                for (const auto& marker : msg->markers) {
+                    marker_store_[topic][marker.ns + std::to_string(marker.id)] = marker;
+                }
+            });
     } else {
-        markers_[key] = *msg;
+        marker_subs_[topic] = node_->create_subscription<visualization_msgs::msg::Marker>(
+            topic, 10, [this, topic](const visualization_msgs::msg::Marker::SharedPtr msg) {
+                std::lock_guard<std::mutex> lock(mtx_);
+                marker_store_[topic][msg->ns + std::to_string(msg->id)] = *msg;
+            });
     }
 }
 
-void MarkerDisplay::markerArrayCallback(const visualization_msgs::msg::MarkerArray::SharedPtr msg) {
-    for (const auto& m : msg->markers) {
-        markerCallback(std::make_shared<visualization_msgs::msg::Marker>(m));
-    }
+bool MarkerDisplay::isTopicEnabled(const std::string& topic) const {
+    std::lock_guard<std::mutex> lock(mtx_);
+    return std::find(enabled_topics_.begin(), enabled_topics_.end(), topic) != enabled_topics_.end();
 }
 
-void MarkerDisplay::render(RvizRenderer& renderer, ftxui::Canvas& canvas, const std::string& fixed_frame, std::shared_ptr<tf2_ros::Buffer> tf_buffer) {
+TopicConfig MarkerDisplay::getTopicConfig(const std::string& topic) {
+    std::lock_guard<std::mutex> lock(mtx_);
+    if (configs_.count(topic)) return configs_[topic];
+    return TopicConfig();
+}
+
+void MarkerDisplay::setTopicConfig(const std::string& topic, const TopicConfig& config) {
+    std::lock_guard<std::mutex> lock(mtx_);
+    configs_[topic] = config;
+}
+
+void MarkerDisplay::render(RvizRenderer& renderer, ftxui::Canvas&, const std::string& fixed_frame, std::shared_ptr<tf2_ros::Buffer> tf_buffer) {
     if (!enabled_) return;
 
-    std::vector<visualization_msgs::msg::Marker> to_render;
+    std::vector<std::string> topics;
     {
         std::lock_guard<std::mutex> lock(mtx_);
-        for (auto const& [k, v] : markers_) to_render.push_back(v);
+        topics = enabled_topics_;
     }
 
-    for (const auto& marker : to_render) {
-        tf2::Transform m_to_w;
-        try {
-            auto t_msg = tf_buffer->lookupTransform(fixed_frame, marker.header.frame_id, tf2::TimePointZero);
-            m_to_w.setOrigin(tf2::Vector3(t_msg.transform.translation.x, t_msg.transform.translation.y, t_msg.transform.translation.z));
-            m_to_w.setRotation(tf2::Quaternion(t_msg.transform.rotation.x, t_msg.transform.rotation.y, t_msg.transform.rotation.z, t_msg.transform.rotation.w));
-        } catch (...) { continue; }
+    for (const auto& topic : topics) {
+        std::map<std::string, visualization_msgs::msg::Marker> markers;
+        TopicConfig cfg;
+        {
+            std::lock_guard<std::mutex> lock(mtx_);
+            if (marker_store_.count(topic)) markers = marker_store_[topic];
+            if (configs_.count(topic)) cfg = configs_[topic];
+        }
 
-        auto col = ftxui::Color::RGB(int(marker.color.r*255), int(marker.color.g*255), int(marker.color.b*255));
-        tf2::Transform v_to_m;
-        v_to_m.setOrigin(tf2::Vector3(marker.pose.position.x, marker.pose.position.y, marker.pose.position.z));
-        v_to_m.setRotation(tf2::Quaternion(marker.pose.orientation.x, marker.pose.orientation.y, marker.pose.orientation.z, marker.pose.orientation.w));
-        tf2::Transform v_to_w = m_to_w * v_to_m;
+        for (auto const& [key, marker] : markers) {
+            if (marker.action == visualization_msgs::msg::Marker::DELETE) continue;
 
-        auto draw_l = [&](float x1, float y1, float z1, float x2, float y2, float z2) {
-            tf2::Vector3 p1 = v_to_w * tf2::Vector3(x1, y1, z1);
-            tf2::Vector3 p2 = v_to_w * tf2::Vector3(x2, y2, z2);
-            renderer.draw_line(p1.x(), p1.y(), p1.z(), p2.x(), p2.y(), p2.z(), col);
-        };
+            tf2::Transform marker_to_world;
+            try {
+                auto transform_msg = tf_buffer->lookupTransform(fixed_frame, marker.header.frame_id, tf2::TimePointZero);
+                tf2::fromMsg(transform_msg.transform, marker_to_world);
+            } catch (...) { continue; }
 
-        float sx = marker.scale.x * 0.5f;
-        float sy = marker.scale.y * 0.5f;
-        float sz = marker.scale.z * 0.5f;
+            tf2::Transform marker_pose;
+            tf2::fromMsg(marker.pose, marker_pose);
+            tf2::Transform total_tf = marker_to_world * marker_pose;
+            tf2::Vector3 pos = total_tf.getOrigin();
 
-        switch (marker.type) {
-            case visualization_msgs::msg::Marker::CUBE:
-                draw_l(-sx, -sy, -sz,  sx, -sy, -sz); draw_l( sx, -sy, -sz,  sx,  sy, -sz);
-                draw_l( sx,  sy, -sz, -sx,  sy, -sz); draw_l(-sx,  sy, -sz, -sx, -sy, -sz);
-                draw_l(-sx, -sy,  sz,  sx, -sy,  sz); draw_l( sx, -sy,  sz,  sx,  sy,  sz);
-                draw_l( sx,  sy,  sz, -sx,  sy,  sz); draw_l(-sx,  sy,  sz, -sx, -sy,  sz);
-                draw_l(-sx, -sy, -sz, -sx, -sy,  sz); draw_l( sx, -sy, -sz,  sx, -sy,  sz);
-                draw_l( sx,  sy, -sz,  sx,  sy,  sz); draw_l(-sx,  sy, -sz, -sx,  sy,  sz);
-                break;
-
-            case visualization_msgs::msg::Marker::SPHERE: {
-                int steps = 8;
-                for (int i=0; i<steps; ++i) {
-                    float a1 = 2.0f * M_PI * i / steps;
-                    float a2 = 2.0f * M_PI * (i+1) / steps;
-                    draw_l(marker.scale.x*0.5f*cos(a1), marker.scale.y*0.5f*sin(a1), 0, marker.scale.x*0.5f*cos(a2), marker.scale.y*0.5f*sin(a2), 0);
-                    draw_l(marker.scale.x*0.5f*cos(a1), 0, marker.scale.z*0.5f*sin(a1), marker.scale.x*0.5f*cos(a2), 0, marker.scale.z*0.5f*sin(a2));
-                    draw_l(0, marker.scale.y*0.5f*cos(a1), marker.scale.z*0.5f*sin(a1), 0, marker.scale.y*0.5f*cos(a2), marker.scale.z*0.5f*sin(a2));
-                }
-                break;
+            uint8_t r_c = 255, g_c = 255, b_c = 255;
+            float alpha = cfg.alpha;
+            if (cfg.color_style == "Topic") {
+                r_c = static_cast<uint8_t>(marker.color.r * 255);
+                g_c = static_cast<uint8_t>(marker.color.g * 255);
+                b_c = static_cast<uint8_t>(marker.color.b * 255);
+                alpha *= marker.color.a;
+            } else if (cfg.color_style == "Flat") {
+                static const uint8_t preset_r[] = {255, 255, 0,   0,   255, 0,   255, 255, 0,   255};
+                static const uint8_t preset_g[] = {255, 0,   255, 0,   255, 255, 0,   127, 255, 127};
+                static const uint8_t preset_b[] = {255, 0,   0,   255, 0,   255, 255, 0,   0,   127};
+                int idx = cfg.color_index % 10;
+                r_c = preset_r[idx]; g_c = preset_g[idx]; b_c = preset_b[idx];
             }
 
-            case visualization_msgs::msg::Marker::CYLINDER: {
-                int steps = 8;
-                for (int i=0; i<steps; ++i) {
-                    float a1 = 2.0f * M_PI * i / steps;
-                    float a2 = 2.0f * M_PI * (i+1) / steps;
-                    draw_l(sx*cos(a1), sy*sin(a1), -sz, sx*cos(a2), sy*sin(a2), -sz);
-                    draw_l(sx*cos(a1), sy*sin(a1),  sz, sx*cos(a2), sy*sin(a2),  sz);
-                    if (i % 2 == 0) draw_l(sx*cos(a1), sy*sin(a1), -sz, sx*cos(a1), sy*sin(a1), sz);
+            if (marker.type == visualization_msgs::msg::Marker::CUBE) {
+                renderer.draw_box(pos.x(), pos.y(), pos.z(), marker.scale.x, marker.scale.y, marker.scale.z, r_c, g_c, b_c, alpha);
+            } else if (marker.type == visualization_msgs::msg::Marker::SPHERE) {
+                renderer.draw_sphere(pos.x(), pos.y(), pos.z(), marker.scale.x * 0.5f, r_c, g_c, b_c, alpha);
+            } else if (marker.type == visualization_msgs::msg::Marker::CYLINDER) {
+                renderer.draw_sphere(pos.x(), pos.y(), pos.z(), marker.scale.x * 0.5f, r_c, g_c, b_c, alpha);
+            } else if (marker.type == visualization_msgs::msg::Marker::ARROW) {
+                tf2::Vector3 tip = total_tf * tf2::Vector3(marker.scale.x, 0, 0);
+                renderer.draw_arrow(pos.x(), pos.y(), pos.z(), tip.x(), tip.y(), tip.z(), r_c, g_c, b_c, alpha, marker.scale.y);
+            } else if (marker.type == visualization_msgs::msg::Marker::LINE_STRIP || marker.type == visualization_msgs::msg::Marker::LINE_LIST) {
+                for (size_t i = 1; i < marker.points.size(); ++i) {
+                    if (marker.type == visualization_msgs::msg::Marker::LINE_LIST && i % 2 == 0) continue;
+                    tf2::Vector3 p1 = total_tf * tf2::Vector3(marker.points[i-1].x, marker.points[i-1].y, marker.points[i-1].z);
+                    tf2::Vector3 p2 = total_tf * tf2::Vector3(marker.points[i].x, marker.points[i].y, marker.points[i].z);
+                    renderer.draw_line(p1.x(), p1.y(), p1.z(), p2.x(), p2.y(), p2.z(), r_c, g_c, b_c, alpha);
                 }
-                break;
+            } else if (marker.type == visualization_msgs::msg::Marker::POINTS) {
+                for (const auto& p : marker.points) {
+                    tf2::Vector3 p_world = total_tf * tf2::Vector3(p.x, p.y, p.z);
+                    renderer.draw_point(p_world.x(), p_world.y(), p_world.z(), r_c, g_c, b_c, alpha);
+                }
             }
-
-            case visualization_msgs::msg::Marker::ARROW:
-                if (marker.points.size() >= 2) {
-                    tf2::Vector3 p1 = v_to_w * tf2::Vector3(marker.points[0].x, marker.points[0].y, marker.points[0].z);
-                    tf2::Vector3 p2 = v_to_w * tf2::Vector3(marker.points[1].x, marker.points[1].y, marker.points[1].z);
-                    renderer.draw_line(p1.x(), p1.y(), p1.z(), p2.x(), p2.y(), p2.z(), col);
-                    // Simple tip
-                    tf2::Vector3 dir = (p2 - p1).normalized();
-                    tf2::Vector3 side = dir.cross(tf2::Vector3(0,0,1)).normalized() * 0.2f * marker.scale.y;
-                    renderer.draw_line(p2.x(), p2.y(), p2.z(), p2.x() - dir.x()*0.3f*marker.scale.x + side.x(), p2.y() - dir.y()*0.3f*marker.scale.x + side.y(), p2.z() - dir.z()*0.3f*marker.scale.x + side.z(), col);
-                    renderer.draw_line(p2.x(), p2.y(), p2.z(), p2.x() - dir.x()*0.3f*marker.scale.x - side.x(), p2.y() - dir.y()*0.3f*marker.scale.x - side.y(), p2.z() - dir.z()*0.3f*marker.scale.x - side.z(), col);
-                } else {
-                    draw_l(0,0,0, marker.scale.x, 0, 0);
-                    draw_l(marker.scale.x, 0, 0, marker.scale.x*0.8f,  0.1f*marker.scale.y, 0);
-                    draw_l(marker.scale.x, 0, 0, marker.scale.x*0.8f, -0.1f*marker.scale.y, 0);
-                }
-                break;
-
-            case visualization_msgs::msg::Marker::LINE_STRIP:
-                if (marker.points.size() >= 2) {
-                    for (size_t i=0; i<marker.points.size()-1; ++i) {
-                        tf2::Vector3 p1 = v_to_w * tf2::Vector3(marker.points[i].x, marker.points[i].y, marker.points[i].z);
-                        tf2::Vector3 p2 = v_to_w * tf2::Vector3(marker.points[i+1].x, marker.points[i+1].y, marker.points[i+1].z);
-                        renderer.draw_line(p1.x(), p1.y(), p1.z(), p2.x(), p2.y(), p2.z(), col);
-                    }
-                }
-                break;
-
-            case visualization_msgs::msg::Marker::LINE_LIST:
-                for (size_t i=0; i+1 < marker.points.size(); i+=2) {
-                    tf2::Vector3 p1 = v_to_w * tf2::Vector3(marker.points[i].x, marker.points[i].y, marker.points[i].z);
-                    tf2::Vector3 p2 = v_to_w * tf2::Vector3(marker.points[i+1].x, marker.points[i+1].y, marker.points[i+1].z);
-                    renderer.draw_line(p1.x(), p1.y(), p1.z(), p2.x(), p2.y(), p2.z(), col);
-                }
-                break;
-
-            case visualization_msgs::msg::Marker::POINTS:
-                for (auto const& p : marker.points) {
-                    tf2::Vector3 pw = v_to_w * tf2::Vector3(p.x, p.y, p.z);
-                    renderer.draw_point(pw.x(), pw.y(), pw.z(), col);
-                }
-                break;
         }
     }
+}
+
+ftxui::Element MarkerDisplay::render_2d(bool /*nav2_active*/, int config_scroll) {
+    using namespace ftxui;
+    std::lock_guard<std::mutex> lock(mtx_);
+    Elements topics_ui;
+    int count = 0;
+    for (const auto& topic : enabled_topics_) {
+        if (count >= config_scroll && count < config_scroll + 4) { 
+            topics_ui.push_back(ConfigHelper::render_summary(topic, configs_[topic]));
+        }
+        count++;
+    }
+    return vbox({
+        hbox({ text(" Marker Settings ") | bold | color(Color::Yellow), filler() }),
+        separator(),
+        vbox(std::move(topics_ui)) | size(HEIGHT, EQUAL, 10),
+    }) | border;
+}
+
+bool MarkerDisplay::handle_event(ftxui::Event /*event*/, int /*scroll_offset*/) {
+    return false;
 }
 
 } // namespace terminal_rviz

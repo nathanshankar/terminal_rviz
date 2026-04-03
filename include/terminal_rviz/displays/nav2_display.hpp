@@ -30,9 +30,9 @@ public:
 
     void onInitialize() override;
     void render(RvizRenderer& renderer, ftxui::Canvas& canvas, const std::string& fixed_frame, std::shared_ptr<tf2_ros::Buffer> tf_buffer) override;
-    ftxui::Element render_2d() override;
-    bool handle_event(ftxui::Event event) override;
-    
+    ftxui::Element render_2d(bool nav2_active = false, int config_scroll = 0) override;
+
+    bool handle_event(ftxui::Event event, int scroll_offset = 0) override;    
     std::string getMessageType() const override { return "Nav2"; }
 
     void set_goal(float x, float y, const std::string& frame);

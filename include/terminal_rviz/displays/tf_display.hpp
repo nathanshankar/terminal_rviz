@@ -4,6 +4,7 @@
 #include <mutex>
 #include <map>
 #include <string>
+#include <set>
 
 #include "tf2_ros/buffer.h"
 #include "tf2_ros/transform_listener.h"
@@ -24,10 +25,19 @@ public:
     void toggleFrame(const std::string& frame);
     bool isFrameEnabled(const std::string& frame) const;
 
+    bool isTopicEnabled(const std::string& topic) const override { return isFrameEnabled(topic); }
+    void setTopic(const std::string& topic) override { toggleFrame(topic); }
+    TopicConfig getTopicConfig(const std::string& topic) override;
+    void setTopicConfig(const std::string& topic, const TopicConfig& config) override;
+    ftxui::Element render_2d(bool nav2_active = false, int config_scroll = 0) override;
+    bool handle_event(ftxui::Event event, int scroll_offset) override;
+
 private:
     std::shared_ptr<tf2_ros::Buffer> tf_buffer_;
     std::shared_ptr<tf2_ros::TransformListener> tf_listener_;
-    std::set<std::string> enabled_frames_;
+    std::vector<std::string> enabled_frames_list_; // Order preservation for sidebar
+    std::map<std::string, TopicConfig> configs_;
+    mutable std::mutex mtx_;
 };
 
 } // namespace terminal_rviz

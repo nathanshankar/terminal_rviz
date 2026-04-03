@@ -15,7 +15,7 @@ public:
 private:
     int cell_count_ = 10;
     float cell_size_ = 1.0f;
-    ftxui::Color color_ = ftxui::Color::GrayDark;
+    ftxui::Color color_ = ftxui::Color::RGB(160, 160, 160);
 };
 
 } // namespace terminal_rviz

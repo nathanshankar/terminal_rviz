@@ -104,7 +104,7 @@ void Nav2Display::remove_last() {
     else has_selecting_pose_ = false;
 }
 
-bool Nav2Display::handle_event(ftxui::Event event) {
+bool Nav2Display::handle_event(ftxui::Event event, int /*scroll_offset*/) {
     if (event == ftxui::Event::Character('c') || event == ftxui::Event::Character('C')) { cancel_nav(); return true; }
     if (event == ftxui::Event::Character(' ') || event == ftxui::Event::Return) { send_goal(); return true; }
     if (event == ftxui::Event::Special("\x7F") || event == ftxui::Event::Backspace) { 
@@ -113,25 +113,28 @@ bool Nav2Display::handle_event(ftxui::Event event) {
     return false;
 }
 
-void Nav2Display::render(RvizRenderer& renderer, ftxui::Canvas& canvas, const std::string& fixed_frame, std::shared_ptr<tf2_ros::Buffer> tf_buffer) {
+void Nav2Display::render(RvizRenderer& renderer, ftxui::Canvas& /*canvas*/, const std::string& /*fixed_frame*/, std::shared_ptr<tf2_ros::Buffer> /*tf_buffer*/) {
     if (!enabled_) return;
     std::lock_guard<std::mutex> lock(mtx_);
 
-    auto draw_arrow = [&](const geometry_msgs::msg::Pose& pose, ftxui::Color col) {
+    auto draw_arrow = [&](const geometry_msgs::msg::Pose& pose, uint8_t r, uint8_t g, uint8_t b) {
         float gx = pose.position.x, gy = pose.position.y, gz = 0.5f;
         double qz = pose.orientation.z, qw = pose.orientation.w;
         double yaw = 2.0 * std::atan2(qz, qw);
         float arrow_len = 0.8f;
         float ex = gx + arrow_len * std::cos(yaw), ey = gy + arrow_len * std::sin(yaw);
-        renderer.draw_line(gx, gy, gz, ex, ey, gz, col);
+        renderer.draw_line(gx, gy, gz, ex, ey, gz, r, g, b, 1.0f);
         float ha = 0.4f, hl = 0.25f;
-        renderer.draw_line(ex, ey, gz, ex - hl * std::cos(yaw - ha), ey - hl * std::sin(yaw - ha), gz, col);
-        renderer.draw_line(ex, ey, gz, ex - hl * std::cos(yaw + ha), ey - hl * std::sin(yaw + ha), gz, col);
-        renderer.draw_line(gx, gy, 0, gx, gy, gz, col);
+        renderer.draw_line(ex, ey, gz, ex - hl * std::cos(yaw - ha), ey - hl * std::sin(yaw - ha), gz, r, g, b, 1.0f);
+        renderer.draw_line(ex, ey, gz, ex - hl * std::cos(yaw + ha), ey - hl * std::sin(yaw + ha), gz, r, g, b, 1.0f);
+        renderer.draw_line(gx, gy, 0, gx, gy, gz, r, g, b, 1.0f);
     };
 
-    for (const auto& p : waypoint_queue_) draw_arrow(p.pose, ftxui::Color::Yellow);
-    if (has_selecting_pose_) draw_arrow(current_selecting_pose_.pose, is_selecting_ ? ftxui::Color::Green : ftxui::Color::White);
+    for (const auto& p : waypoint_queue_) draw_arrow(p.pose, 255, 255, 0); // Yellow
+    if (has_selecting_pose_) {
+        if (is_selecting_) draw_arrow(current_selecting_pose_.pose, 0, 255, 0); // Green
+        else draw_arrow(current_selecting_pose_.pose, 255, 255, 255); // White
+    }
 }
 
 void Nav2Display::finalize_selection() {
@@ -143,7 +146,7 @@ void Nav2Display::finalize_selection() {
     }
 }
 
-ftxui::Element Nav2Display::render_2d() {
+ftxui::Element Nav2Display::render_2d(bool /*nav2_active*/, int /*config_scroll*/) {
     if (!enabled_) return ftxui::filler();
     std::lock_guard<std::mutex> lock(mtx_);
     using namespace ftxui;
