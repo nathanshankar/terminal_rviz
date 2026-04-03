@@ -540,13 +540,35 @@ Element Visualizer::render_frame() {
     
     renderer_.clear(); // Always clear to prevent stale labels/grid lines
     if (!show_blocking_modal) {
-        if (grid_display_) grid_display_->render(renderer_, c, fixed_frame_, tf_buffer_);
+        // Due to "first-come-first-served" Z-buffering (z < dot.z), 
+        // we render high-priority items FIRST so they aren't overdrawn by Map/PointCloud.
+        
         std::lock_guard<std::recursive_mutex> lock(displays_mutex_);
+        
+        // 1. Render Path and other high-priority plugins (Top layer)
         for (auto& display : displays_) {
-            if (display->isAdded() && display->isEnabled()) {
+            if (display->isAdded() && display->isEnabled() && 
+                display->getName() != "PointCloud2" && display->getName() != "Map") {
                 display->render(renderer_, c, fixed_frame_, tf_buffer_);
             }
         }
+
+        // 2. Render Map (Middle layer)
+        for (auto& display : displays_) {
+            if (display->isAdded() && display->isEnabled() && display->getName() == "Map") {
+                display->render(renderer_, c, fixed_frame_, tf_buffer_);
+            }
+        }
+
+        // 3. Render PointClouds (Bottom layer)
+        for (auto& display : displays_) {
+            if (display->isAdded() && display->isEnabled() && display->getName() == "PointCloud2") {
+                display->render(renderer_, c, fixed_frame_, tf_buffer_);
+            }
+        }
+
+        if (grid_display_) grid_display_->render(renderer_, c, fixed_frame_, tf_buffer_);
+        
         renderer_.finish(c);
     }
 
@@ -1067,7 +1089,7 @@ bool Visualizer::handle_event(Event event, int mouse_dx) {
             auto terminal = ftxui::Terminal::Size();
             int modal_width = 44; 
             int frame_count = (int)available_frames_.size();
-            int items_height = std::min(15, frame_count);
+            int items_height = 15; // Matches max_visible in render_frame
             int modal_height = items_height + 7; 
             int start_x = (terminal.dimx - modal_width) / 2;
             int start_y = (terminal.dimy - modal_height) / 2;
@@ -1703,8 +1725,8 @@ bool Visualizer::handle_event(Event event, int mouse_dx) {
                                 auto topics = active_disp->getEnabledTopics();
                                 if (item_idx >= 0 && item_idx < (int)topics.size()) {
                                     int rx = mouse.x - (terminal.dimx - right_width_ - 1);
-                                    if (rx > right_width_ - 10) {
-                                        // CLICKED [EDIT] -> Open Topic SETTINGS
+                                    if (rx > right_width_ - 10 || active_disp->getName() != "Image") {
+                                        // CLICKED [EDIT] or TOPIC NAME (for non-image) -> Open Topic SETTINGS
                                         show_config_modal_ = true;
                                         config_modal_topic_ = topics[item_idx];
                                         config_target_display_ = active_disp;
@@ -1712,7 +1734,7 @@ bool Visualizer::handle_event(Event event, int mouse_dx) {
                                         screen_.PostEvent(Event::Custom);
                                         return true;
                                     } else {
-                                        // CLICKED TOPIC NAME -> Open Topic SELECTION (to change topic)
+                                        // CLICKED TOPIC NAME (for Image) -> Open Topic SELECTION (to change topic)
                                         topic_target_display_ = active_disp;
                                         topic_target_slot_ = item_idx;
                                         topic_modal_selected_idx_ = 0;

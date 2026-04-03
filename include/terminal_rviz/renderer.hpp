@@ -85,10 +85,12 @@ public:
         }
     };
     Projector get_projector(const tf2::Transform& world_to_object) const;
+    Projector get_view_projector() const;
 
     void enable_gpu(bool enable);
     bool is_gpu_enabled() const { return use_gpu_; }
     void gpu_render_points(const std::vector<float>& points, const std::vector<uint8_t>& colors, const Projector& projector, float alpha);
+    void gpu_render_lines(const std::vector<float>& lines, const std::vector<uint8_t>& colors, const Projector& projector, float alpha);
 
     bool pick_ground_plane(int sx, int sy, float& out_x, float& out_y) const;
 
@@ -114,6 +116,11 @@ private:
     std::vector<ftxui::Color> char_colors_;
     std::vector<int> dirty_cells_;
     std::vector<bool> is_dirty_;
+
+    std::vector<float> gpu_points_3d_;
+    std::vector<uint8_t> gpu_points_color_;
+    std::vector<float> gpu_lines_3d_;
+    std::vector<uint8_t> gpu_lines_color_;
 
     bool use_gpu_ = false;
 #ifdef USE_GPU

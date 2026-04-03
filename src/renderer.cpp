@@ -44,6 +44,11 @@ void RvizRenderer::set_camera(float yaw, float pitch, float roll, float dist, fl
 
 void RvizRenderer::clear() {
     labels_.clear();
+    gpu_points_3d_.clear();
+    gpu_points_color_.clear();
+    gpu_lines_3d_.clear();
+    gpu_lines_color_.clear();
+
     int cw = width_ / 2;
     for (int idx : dirty_cells_) {
         char_z_buffer_[idx] = 1000.0f;
@@ -117,6 +122,11 @@ void RvizRenderer::draw_point(float x, float y, float z, ftxui::Color /*color*/,
 }
 
 void RvizRenderer::draw_point(float x, float y, float z, uint8_t r, uint8_t g, uint8_t b, float alpha) {
+    if (use_gpu_) {
+        gpu_points_3d_.push_back(x); gpu_points_3d_.push_back(y); gpu_points_3d_.push_back(z);
+        gpu_points_color_.push_back(r); gpu_points_color_.push_back(g); gpu_points_color_.push_back(b);
+        return;
+    }
     int sx, sy; float sz;
     if (project(x, y, z, sx, sy, sz)) plot(sx, sy, sz, r, g, b, alpha);
 }
@@ -126,6 +136,12 @@ void RvizRenderer::draw_line(float x1, float y1, float z1, float x2, float y2, f
 }
 
 void RvizRenderer::draw_line(float x1, float y1, float z1, float x2, float y2, float z2, uint8_t r, uint8_t g, uint8_t b, float alpha) {
+    if (use_gpu_) {
+        gpu_lines_3d_.push_back(x1); gpu_lines_3d_.push_back(y1); gpu_lines_3d_.push_back(z1);
+        gpu_lines_3d_.push_back(x2); gpu_lines_3d_.push_back(y2); gpu_lines_3d_.push_back(z2);
+        gpu_lines_color_.push_back(r); gpu_lines_color_.push_back(g); gpu_lines_color_.push_back(b);
+        return;
+    }
     int sx1, sy1, sx2, sy2; float sz1, sz2;
     bool p1 = project(x1, y1, z1, sx1, sy1, sz1);
     bool p2 = project(x2, y2, z2, sx2, sy2, sz2);
@@ -239,6 +255,14 @@ void RvizRenderer::draw_circle(float x, float y, float z, float radius, uint8_t 
 void RvizRenderer::finish(ftxui::Canvas& canvas) {
 #ifdef USE_GPU
     if (use_gpu_ && gpu_renderer_) {
+        Projector view_proj = get_view_projector();
+        if (!gpu_points_3d_.empty()) {
+            gpu_renderer_->render_points(gpu_points_3d_, gpu_points_color_, view_proj, global_alpha_);
+        }
+        if (!gpu_lines_3d_.empty()) {
+            gpu_renderer_->render_lines(gpu_lines_3d_, gpu_lines_color_, view_proj, global_alpha_);
+        }
+
         std::vector<Dot> gpu_dots(width_ * height_);
         gpu_renderer_->download(gpu_dots);
 
@@ -289,6 +313,15 @@ void RvizRenderer::finish(ftxui::Canvas& canvas) {
     }
 }
 
+RvizRenderer::Projector RvizRenderer::get_view_projector() const {
+    Projector p;
+    p.zoom = zoom_; p.width = width_; p.height = height_;
+    p.m[0][0] = m00_; p.m[0][1] = m01_; p.m[0][2] = m02_; p.m[0][3] = -(m00_ * cx_ + m01_ * cy_ + m02_ * cz_);
+    p.m[1][0] = m10_; p.m[1][1] = m11_; p.m[1][2] = m12_; p.m[1][3] = -(m10_ * cx_ + m11_ * cy_ + m12_ * cz_);
+    p.m[2][0] = m20_; p.m[2][1] = m21_; p.m[2][2] = m22_; p.m[2][3] = -(m20_ * cx_ + m21_ * cy_ + m22_ * cz_) + dist_;
+    return p;
+}
+
 RvizRenderer::Projector RvizRenderer::get_projector(const tf2::Transform& world_to_object) const {
     Projector p;
     p.zoom = zoom_; p.width = width_; p.height = height_;
@@ -326,6 +359,14 @@ void RvizRenderer::gpu_render_points(const std::vector<float>& points, const std
     if (use_gpu_ && gpu_renderer_) gpu_renderer_->render_points(points, colors, projector, alpha);
 #else
     (void)points; (void)colors; (void)projector; (void)alpha;
+#endif
+}
+
+void RvizRenderer::gpu_render_lines(const std::vector<float>& lines, const std::vector<uint8_t>& colors, const Projector& projector, float alpha) {
+#ifdef USE_GPU
+    if (use_gpu_ && gpu_renderer_) gpu_renderer_->render_lines(lines, colors, projector, alpha);
+#else
+    (void)lines; (void)colors; (void)projector; (void)alpha;
 #endif
 }
 
