@@ -426,7 +426,9 @@ Element Visualizer::render_frame() {
     Element image_panel = filler(), nav2_panel = filler(), teleop_panel = filler(), rosbag_panel = filler(), config_panel = filler();
     bool nav2_active = false;
     bool teleop_active = false;
+#ifdef HAS_ROSBAG2
     bool rosbag_active = false;
+#endif
 
     {
         std::lock_guard<std::recursive_mutex> lock(displays_mutex_);
@@ -1737,7 +1739,9 @@ bool Visualizer::handle_event(Event event, int mouse_dx) {
 
                             }
                         }
-                    } else if (rosbag) {
+                    } 
+#ifdef HAS_ROSBAG2
+                    else if (rosbag) {
                         int cry = mouse.y - (terminal.dimy - 14);
                         if (mouse.button == Mouse::WheelUp)   { config_scroll_ = std::max(0, config_scroll_ - 1); screen_.PostEvent(Event::Custom); return true; }
                         if (mouse.button == Mouse::WheelDown) { config_scroll_++; screen_.PostEvent(Event::Custom); return true; }
@@ -1822,6 +1826,7 @@ bool Visualizer::handle_event(Event event, int mouse_dx) {
                             }
                         }
                     }
+#endif
 
                     // Fallback to Teleop/Nav2 or custom display event handling
                     if (active_disp) {
