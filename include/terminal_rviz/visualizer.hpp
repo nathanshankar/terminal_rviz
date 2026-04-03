@@ -94,9 +94,12 @@ private:
         int display_idx = -1; // Index in displays_ if it's a plugin type leaf
         int indent = 0;
         bool is_plugin_type = false;
+        bool is_expanded = false;
+        bool has_children = false;
     };
     std::vector<TopicSelectionEntry> modal_topic_entries_;
     std::map<std::pair<std::string, int>, bool> modal_topic_selections_;
+    std::set<std::string> expanded_topic_nodes_;
 
     std::vector<std::string> plugin_names_;
     std::vector<std::string> panel_names_;

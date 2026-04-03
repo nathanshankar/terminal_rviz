@@ -204,6 +204,15 @@ void Visualizer::load_config(const std::string& path) {
     std::ifstream f(path);
     if (!f.is_open()) { status_msg_ = "Failed to open file for loading"; return; }
 
+    {
+        std::lock_guard<std::recursive_mutex> lock(displays_mutex_);
+        modal_topic_selections_.clear();
+        for (auto& d : displays_) {
+            d->setAdded(false);
+            d->setEnabled(false);
+        }
+    }
+
     std::string line;
     while (std::getline(f, line)) {
         if (line.empty()) continue;
@@ -231,10 +240,29 @@ void Visualizer::load_config(const std::string& path) {
                 if (d->getName() == name) {
                     d->setAdded(added);
                     d->setEnabled(enabled);
+                    
+                    // Keep modal states in sync
+                    int d_idx = -1;
+                    for (size_t i = 0; i < displays_.size(); ++i) {
+                        if (displays_[i] == d) { d_idx = (int)i; break; }
+                    }
+                    if (d_idx >= 0 && d_idx < 64) {
+                        modal_plugin_states_[d_idx] = added;
+                    }
+
                     // PointCloud2 and similar might have multiple topics, but setTopic usually adds/toggles.
                     // For single-topic displays, this is straightforward.
                     if (!topic.empty() && topic != "None") {
                         if (d->getTopic() != topic) d->setTopic(topic);
+                        
+                        // Keep modal selections in sync
+                        int d_idx = -1;
+                        for (size_t i = 0; i < displays_.size(); ++i) {
+                            if (displays_[i] == d) { d_idx = (int)i; break; }
+                        }
+                        if (d_idx >= 0) {
+                            modal_topic_selections_[{topic, d_idx}] = true;
+                        }
                     }
                     break;
                 }
@@ -260,6 +288,17 @@ void Visualizer::load_config(const std::string& path) {
                         d->setTopic(tname);
                     }
                     d->setTopicConfig(tname, cfg);
+                    
+                    // Keep modal selections in sync
+                    if (tname != "None" && !tname.empty()) {
+                        int d_idx = -1;
+                        for (size_t i = 0; i < displays_.size(); ++i) {
+                            if (displays_[i] == d) { d_idx = (int)i; break; }
+                        }
+                        if (d_idx >= 0) {
+                            modal_topic_selections_[{tname, d_idx}] = true;
+                        }
+                    }
                     break;
                 }
             }
@@ -287,16 +326,8 @@ void Visualizer::discover_frames() {
 void Visualizer::build_topic_tree() {
     std::lock_guard<std::recursive_mutex> lock(displays_mutex_);
     modal_topic_entries_.clear();
-    modal_topic_selections_.clear();
-
-    for (size_t i = 0; i < displays_.size(); ++i) {
-        if (displays_[i]->isAdded()) {
-            auto topics = displays_[i]->getEnabledTopics();
-            for (const auto& t : topics) {
-                modal_topic_selections_[{t, (int)i}] = true;
-            }
-        }
-    }
+    
+    // We don't clear modal_topic_selections_ here as they represent the state of what's added
 
     struct Node {
         std::string name;
@@ -337,16 +368,21 @@ void Visualizer::build_topic_tree() {
     }
 
     std::function<void(Node*, int)> flatten = [&](Node* n, int indent) {
+        bool expanded = false;
         if (!n->name.empty()) {
-            modal_topic_entries_.push_back({n->name, n->full_path, -1, indent, false});
+            expanded = (expanded_topic_nodes_.find(n->full_path) != expanded_topic_nodes_.end());
+            bool has_children = !n->children.empty() || !n->matching_plugins.empty();
+            modal_topic_entries_.push_back({n->name, n->full_path, -1, indent, false, expanded, has_children});
         }
         
-        for (auto& [name, child] : n->children) {
-            flatten(child.get(), n->name.empty() ? 0 : indent + 1);
-        }
+        if (n->name.empty() || expanded) {
+            for (auto& [name, child] : n->children) {
+                flatten(child.get(), n->name.empty() ? 0 : indent + 1);
+            }
 
-        for (int p_idx : n->matching_plugins) {
-            modal_topic_entries_.push_back({displays_[p_idx]->getName(), n->full_path, p_idx, indent + 1, true});
+            for (int p_idx : n->matching_plugins) {
+                modal_topic_entries_.push_back({displays_[p_idx]->getName(), n->full_path, p_idx, indent + 1, true, false, false});
+            }
         }
     };
 
@@ -735,7 +771,11 @@ Element Visualizer::render_frame() {
                 std::string indent_str = "";
                 for(int s=0; s<entry.indent; ++s) indent_str += "  ";
                 
-                std::string prefix = entry.is_plugin_type ? "" : "> ";
+                std::string prefix = "";
+                if (!entry.is_plugin_type) {
+                    prefix = entry.is_expanded ? "▼ " : "▶ ";
+                }
+                
                 std::string label = indent_str + prefix + entry.label;
                 if (entry.is_plugin_type) {
                     bool checked = modal_topic_selections_[{entry.topic, entry.display_idx}];
@@ -1118,6 +1158,14 @@ bool Visualizer::handle_event(Event event, int mouse_dx) {
                                         }
                                     }
                                     if (can_select) modal_topic_selections_[{entry.topic, entry.display_idx}] = !modal_topic_selections_[{entry.topic, entry.display_idx}];
+                                } else if (!entry.is_plugin_type) {
+                                    // Toggle expansion
+                                    if (expanded_topic_nodes_.count(entry.topic)) {
+                                        expanded_topic_nodes_.erase(entry.topic);
+                                    } else {
+                                        expanded_topic_nodes_.insert(entry.topic);
+                                    }
+                                    build_topic_tree();
                                 }
                             }
                         }
@@ -1170,6 +1218,14 @@ bool Visualizer::handle_event(Event event, int mouse_dx) {
                             }
                         }
                         if (can_select) modal_topic_selections_[{entry.topic, entry.display_idx}] = !modal_topic_selections_[{entry.topic, entry.display_idx}];
+                    } else if (!entry.is_plugin_type) {
+                        // Toggle expansion
+                        if (expanded_topic_nodes_.count(entry.topic)) {
+                            expanded_topic_nodes_.erase(entry.topic);
+                        } else {
+                            expanded_topic_nodes_.insert(entry.topic);
+                        }
+                        build_topic_tree();
                     }
                 }
             } else if (modal_selected_idx_ < display_count) {
@@ -1242,6 +1298,14 @@ bool Visualizer::handle_event(Event event, int mouse_dx) {
                             }
                         }
                         if (can_select) modal_topic_selections_[{entry.topic, entry.display_idx}] = !modal_topic_selections_[{entry.topic, entry.display_idx}];
+                    } else if (!entry.is_plugin_type) {
+                        // Toggle expansion
+                        if (expanded_topic_nodes_.count(entry.topic)) {
+                            expanded_topic_nodes_.erase(entry.topic);
+                        } else {
+                            expanded_topic_nodes_.insert(entry.topic);
+                        }
+                        build_topic_tree();
                     }
                 }
             } else if (modal_selected_idx_ < display_count) {
@@ -1752,6 +1816,16 @@ bool Visualizer::handle_event(Event event, int mouse_dx) {
             std::lock_guard<std::recursive_mutex> lock(displays_mutex_);
             for (size_t i = 0; i < displays_.size(); ++i) {
                 if (i < 64) modal_plugin_states_[i] = displays_[i]->isAdded();
+            }
+            // Initialize topic selections
+            modal_topic_selections_.clear();
+            for (size_t i = 0; i < displays_.size(); ++i) {
+                if (displays_[i]->isAdded()) {
+                    auto topics = displays_[i]->getEnabledTopics();
+                    for (const auto& t : topics) {
+                        modal_topic_selections_[{t, (int)i}] = true;
+                    }
+                }
             }
         }
         screen_.PostEvent(Event::Custom);
