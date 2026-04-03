@@ -24,6 +24,8 @@ find_package(std_msgs REQUIRED)
 find_package(nav2_msgs REQUIRED)
 find_package(action_msgs REQUIRED)
 find_package(actionlib_msgs REQUIRED)
+find_package(rosbag2_interfaces REQUIRED)
+find_package(rosgraph_msgs REQUIRED)
 
 option(WITH_GPU "Build with OpenCL GPU support" ON)
 
@@ -110,6 +112,8 @@ ament_target_dependencies(${PROJECT_NAME}_core
   nav2_msgs
   action_msgs
   actionlib_msgs
+  rosbag2_interfaces
+  rosgraph_msgs
 )
 
 target_link_libraries(${PROJECT_NAME}_core
@@ -149,6 +153,8 @@ ament_target_dependencies(terminal_rviz_node
   nav2_msgs
   action_msgs
   actionlib_msgs
+  rosbag2_interfaces
+  rosgraph_msgs
 )
 
 target_link_libraries(terminal_rviz_node

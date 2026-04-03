@@ -119,6 +119,7 @@ private:
     std::string config_modal_topic_;
     std::shared_ptr<Display> config_target_display_;
     bool is_dragging_config_ = false;
+    bool is_dragging_seek_ = false;
     int drag_captured_idx_ = -1;
 
     // File Browser

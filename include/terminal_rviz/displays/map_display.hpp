@@ -28,6 +28,7 @@ public:
     float getCenterY() const;
     float getWidth() const;
     float getHeight() const;
+    std::string getFrameId() const;
 
     std::string getMessageType() const override { return "nav_msgs/msg/OccupancyGrid"; }
 

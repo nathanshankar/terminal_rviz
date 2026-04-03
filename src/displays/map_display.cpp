@@ -84,6 +84,12 @@ float MapDisplay::getHeight() const {
     return latest_maps_.begin()->second->info.height * latest_maps_.begin()->second->info.resolution;
 }
 
+std::string MapDisplay::getFrameId() const {
+    std::lock_guard<std::mutex> lock(mtx_);
+    if (latest_maps_.empty()) return "map";
+    return latest_maps_.begin()->second->header.frame_id;
+}
+
 void MapDisplay::render(RvizRenderer& renderer, ftxui::Canvas&, const std::string& fixed_frame, std::shared_ptr<tf2_ros::Buffer> tf_buffer) {
     if (!enabled_) return;
 

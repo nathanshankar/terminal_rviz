@@ -400,7 +400,6 @@ Element Visualizer::render_frame() {
     }
 
     bool show_blocking_modal = show_plugin_modal_ || show_frame_modal_ || show_file_modal_;
-    bool show_any_modal = show_blocking_modal || show_topic_modal_ || show_config_modal_;
 
     int left_width = show_blocking_modal ? 0 : 30;
     int right_width = 0;
@@ -545,7 +544,7 @@ Element Visualizer::render_frame() {
             std::string type = disp->getMessageType();
             if (type == "None") topic_list.push_back(text("No settings") | dim);
             else {
-                std::string label = (type == "TF") ? "Frames [T/Y]:" : ("Type: " + type);
+                std::string label = (type == "TF") ? "Frames [Y/H]:" : ("Type: " + type);
                 topic_list.push_back(text(label) | dim | size(WIDTH, LESS_THAN, 25));
                 topic_list.push_back(separator());
                 
@@ -591,7 +590,7 @@ Element Visualizer::render_frame() {
             text(" [SAVE] ") | (is_save_mode_ && show_file_modal_ ? inverted : nothing) | color(Color::Green),
             text(" [LOAD] ") | (!is_save_mode_ && show_file_modal_ ? inverted : nothing) | color(Color::Cyan),
             filler(),
-            text(" [P] Plugins | [F] Frame | [V] Tool | [R] Reset | [M] TopDown | [G] Grid | [Tab] Select | [Space] Toggle | [Esc] Quit ") | dim
+            text(" [P] Plugins | [F] Frame | [V] Tool | [R] Reset | [T] TopDown | [G] Grid | [Tab] Select | [Space] Toggle | [Esc] Quit ") | dim
         }),
         separator(),
         hbox({
@@ -609,7 +608,7 @@ Element Visualizer::render_frame() {
                     vbox(std::move(display_list)) | border | size(HEIGHT, EQUAL, 8),
                 }) | border,
                 vbox({
-                    text(" TOPICS/FRAMES [T/Y] ") | bold | color(Color::Yellow),
+                    text(" TOPICS/FRAMES [Y/H] ") | bold | color(Color::Yellow),
                     vbox(std::move(topic_list)) | border | flex,
                 }) | border | flex,
                 vbox({
@@ -911,8 +910,8 @@ bool Visualizer::handle_event(Event event, int mouse_dx) {
                 int btn_y = start_y + modal_h - 2;
                 if (mouse.y == btn_y) {
                     int mid = start_x + modal_w / 2;
-                    if (is_save_mode_) {
-                        if (mouse.x < mid) file_selected_idx_ = count; // SAVE
+                    if (is_save_mode_ || is_dir_picker_) {
+                        if (mouse.x < mid) file_selected_idx_ = count; // SAVE / SELECT
                         else file_selected_idx_ = count + 1; // CANCEL
                     } else {
                         // In Load mode, buttons start with CANCEL since SAVE is hidden
@@ -945,7 +944,10 @@ bool Visualizer::handle_event(Event event, int mouse_dx) {
                     for (auto& d : displays_) {
                         if (d->getName() == "Rosbag") {
                             auto rosbag = std::dynamic_pointer_cast<RosbagDisplay>(d);
-                            if (rosbag) rosbag->set_output_path(current_path_.string());
+                            if (rosbag) {
+                                if (rosbag->get_tab() == 0) rosbag->set_output_path(current_path_.string());
+                                else rosbag->set_input_path(current_path_.string());
+                            }
                             break;
                         }
                     }
@@ -1354,6 +1356,34 @@ bool Visualizer::handle_event(Event event, int mouse_dx) {
         auto mouse = event.mouse();
         auto terminal = ftxui::Terminal::Size();
 
+        if (mouse.motion == Mouse::Released) {
+            is_dragging_config_ = false;
+            if (is_dragging_seek_) {
+                is_dragging_seek_ = false;
+                std::lock_guard<std::recursive_mutex> lock(displays_mutex_);
+                for (auto& d : displays_) {
+                    if (d->getName() == "Rosbag") {
+                        auto rb = std::dynamic_pointer_cast<RosbagDisplay>(d);
+                        if (rb) rb->finish_scrubbing();
+                        break;
+                    }
+                }
+            }
+        }
+
+        if (is_dragging_seek_) {
+            std::lock_guard<std::recursive_mutex> lock(displays_mutex_);
+            std::shared_ptr<RosbagDisplay> rosbag = nullptr;
+            for (auto& d : displays_) if (d->getName() == "Rosbag") { rosbag = std::dynamic_pointer_cast<RosbagDisplay>(d); break; }
+            if (rosbag) {
+                int rx = mouse.x - (terminal.dimx - right_width_ - 1);
+                float progress = std::clamp(static_cast<float>(rx - 7) / (right_width_ - 15), 0.0f, 1.0f);
+                rosbag->seek(progress);
+            }
+            screen_.PostEvent(Event::Custom);
+            return true;
+        }
+
         if (mouse.y >= 0 && mouse.y <= 2) { // Top bar area
             if (mouse.button == Mouse::Left && mouse.motion == Mouse::Pressed) {
                 // Approximate positions
@@ -1554,66 +1584,158 @@ bool Visualizer::handle_event(Event event, int mouse_dx) {
                     }
                 } else {
                     std::lock_guard<std::recursive_mutex> lock(displays_mutex_);
-                    
+
+                    // Priority should match render_frame: config_panel > rosbag_panel > teleop_panel > nav2_panel
+                    bool config_active = false;
+                    std::shared_ptr<Display> active_disp = nullptr;
+                    if (plugin_idx_ >= 0 && plugin_idx_ < (int)displays_.size()) {
+                        active_disp = displays_[plugin_idx_];
+                        if (active_disp->getName() != "Image" && active_disp->getName() != "Nav2" && 
+                            active_disp->getName() != "Teleop" && active_disp->getName() != "Rosbag" && 
+                            active_disp->isAdded() && active_disp->isEnabled()) {
+                            config_active = true;
+                        }
+                    }
+
                     std::shared_ptr<RosbagDisplay> rosbag = nullptr;
                     for (auto& d : displays_) if (d->getName() == "Rosbag" && d->isAdded() && d->isEnabled()) { rosbag = std::dynamic_pointer_cast<RosbagDisplay>(d); break; }
 
-                    if (rosbag) {
+                    if (config_active) {
+                        if (mouse.button == Mouse::WheelUp)   { config_scroll_ = std::max(0, config_scroll_ - 1); screen_.PostEvent(Event::Custom); return true; }
+                        if (mouse.button == Mouse::WheelDown) { config_scroll_++; screen_.PostEvent(Event::Custom); return true; }
+
+                        if (mouse.button == Mouse::Left && mouse.motion == Mouse::Pressed) {
+                            int cry = mouse.y - (terminal.dimy - 12); 
+                            if (cry >= 0 && cry < 10) {
+                                int item_idx = cry + config_scroll_;
+                                auto topics = active_disp->getEnabledTopics();
+                                if (item_idx >= 0 && item_idx < (int)topics.size()) {
+                                    int rx = mouse.x - (terminal.dimx - right_width_ - 1);
+                                    if (rx > right_width_ - 10) {
+                                        // CLICKED [EDIT] -> Open Topic SETTINGS
+                                        show_config_modal_ = true;
+                                        config_modal_topic_ = topics[item_idx];
+                                        config_target_display_ = active_disp;
+                                        config_modal_selected_idx_ = 0;
+                                        screen_.PostEvent(Event::Custom);
+                                        return true;
+                                    } else {
+                                        // CLICKED TOPIC NAME -> Open Topic SELECTION (to change topic)
+                                        topic_target_display_ = active_disp;
+                                        topic_target_slot_ = item_idx;
+                                        topic_modal_selected_idx_ = 0;
+                                        topic_modal_x_ = mouse.x - 20;
+                                        topic_modal_y_ = mouse.y;
+
+                                        topic_modal_list_.clear();
+                                        std::string target_type = active_disp->getMessageType();
+                                        auto topic_map = node_->get_topic_names_and_types();
+                                        for (const auto& [name, types] : topic_map) {
+                                            for (const auto& type : types) {
+                                                if (type == target_type) {
+                                                    topic_modal_list_.push_back(name);
+                                                    break;
+                                                }
+                                            }
+                                        }
+                                        std::sort(topic_modal_list_.begin(), topic_modal_list_.end());
+                                        show_topic_modal_ = true;
+                                        screen_.PostEvent(Event::Custom);
+                                        return true;
+                                    }
+                                }
+
+                            }
+                        }
+                    } else if (rosbag) {
                         int cry = mouse.y - (terminal.dimy - 14);
                         if (mouse.button == Mouse::WheelUp)   { config_scroll_ = std::max(0, config_scroll_ - 1); screen_.PostEvent(Event::Custom); return true; }
                         if (mouse.button == Mouse::WheelDown) { config_scroll_++; screen_.PostEvent(Event::Custom); return true; }
 
                         if (mouse.button == Mouse::Left && mouse.motion == Mouse::Pressed) {
-                            if (cry == 2) { // Output Path change
-                                show_file_modal_ = true;
-                                is_dir_picker_ = true;
-                                refresh_file_list();
-                                screen_.PostEvent(Event::Custom);
-                                return true;
-                            } else if (cry >= 4 && cry <= 8) { // Topic list (scrolled)
-                                auto topic_names = node_->get_topic_names_and_types();
-                                std::vector<std::string> sorted_topics;
-                                for (auto const& [name, types] : topic_names) sorted_topics.push_back(name);
-                                std::sort(sorted_topics.begin(), sorted_topics.end());
-                                int idx = cry - 4 + config_scroll_;
-                                if (idx >= 0 && idx < (int)sorted_topics.size()) {
-                                    rosbag->toggle_topic(sorted_topics[idx]);
+                            // Top bar of panel (Tabs)
+                            if (cry == 0) {
+                                int rx = mouse.x - (terminal.dimx - right_width_ - 1);
+                                if (rx > right_width_ - 16) {
+                                    if (rx < right_width_ - 8) rosbag->set_tab(0);
+                                    else rosbag->set_tab(1);
                                     screen_.PostEvent(Event::Custom);
                                     return true;
                                 }
-                            } else if (cry == 10 || cry == 11 || cry == 12) { // Buttons row (accounting for border/padding)
-                                int rx = mouse.x - (terminal.dimx - right_width_ - 1);
-                                if (rx < right_width_ / 2) rosbag->start_recording();
-                                else rosbag->stop_recording();
-                                screen_.PostEvent(Event::Custom);
-                                return true;
+                            }
+
+                            // Check for [EDIT] button in other display settings (This was redundant/conflicting logic, now handled by config_active)
+
+                            if (rosbag->get_tab() == 0) { // RECORD
+                                if (cry == 2) { // Output Path change
+                                    int rx = mouse.x - (terminal.dimx - right_width_ - 1);
+                                    if (rx > right_width_ - 12) { // Only if clicked on [CHANGE]
+                                        show_file_modal_ = true;
+                                        is_dir_picker_ = true;
+                                        refresh_file_list();
+                                        screen_.PostEvent(Event::Custom);
+                                        return true;
+                                    }
+                                } else if (cry >= 4 && cry <= 7) { // Topic list (scrolled)
+                                    auto topic_names = node_->get_topic_names_and_types();
+                                    std::vector<std::string> sorted_topics;
+                                    for (auto const& [name, types] : topic_names) sorted_topics.push_back(name);
+                                    std::sort(sorted_topics.begin(), sorted_topics.end());
+                                    int idx = cry - 4 + config_scroll_;
+                                    if (idx >= 0 && idx < (int)sorted_topics.size()) {
+                                        rosbag->toggle_topic(sorted_topics[idx]);
+                                        screen_.PostEvent(Event::Custom);
+                                        return true;
+                                    }
+                                } else if (cry == 9 || cry == 10 || cry == 11) { // Buttons row
+                                    int rx = mouse.x - (terminal.dimx - right_width_ - 1);
+                                    if (rx < right_width_ / 2) rosbag->start_recording();
+                                    else rosbag->stop_recording();
+                                    screen_.PostEvent(Event::Custom);
+                                    return true;
+                                }
+                            } else { // PLAY
+                                if (cry == 2) { // Input Path selection
+                                    int rx = mouse.x - (terminal.dimx - right_width_ - 1);
+                                    if (rx > right_width_ - 12) { // Only if clicked on [SELECT]
+                                        show_file_modal_ = true;
+                                        is_dir_picker_ = true; // Still use dir picker since bags are folders
+                                        refresh_file_list();
+                                        screen_.PostEvent(Event::Custom);
+                                        return true;
+                                    }
+                                } else if (cry == 4) { // Rate, Loop, and Pause row
+                                    int rx = mouse.x - (terminal.dimx - right_width_ - 1);
+                                    if (rx >= 7 && rx <= 11) rosbag->set_playback_rate(rosbag->get_playback_rate() - 0.1f);
+                                    else if (rx >= 16 && rx <= 20) rosbag->set_playback_rate(rosbag->get_playback_rate() + 0.1f);
+                                    else if (rx >= 25 && rx <= 35) rosbag->toggle_loop();
+                                    else if (rx > right_width_ - 12) rosbag->toggle_pause();
+                                    screen_.PostEvent(Event::Custom);
+                                    return true;
+                                } else if (cry == 6) { // Seek row
+                                    int rx = mouse.x - (terminal.dimx - right_width_ - 1);
+                                    if (mouse.motion == Mouse::Pressed) {
+                                        is_dragging_seek_ = true;
+                                        float progress = std::clamp(static_cast<float>(rx - 7) / (right_width_ - 15), 0.0f, 1.0f);
+                                        rosbag->start_scrubbing(progress);
+                                        rosbag->seek(progress);
+                                    }
+                                    screen_.PostEvent(Event::Custom);
+                                    return true;
+                                } else if (cry >= 8 && cry <= 10) { // Play buttons row
+                                    int rx = mouse.x - (terminal.dimx - right_width_ - 1);
+                                    if (rx < right_width_ / 2) rosbag->start_playback();
+                                    else rosbag->stop_playback();
+                                    screen_.PostEvent(Event::Custom);
+                                    return true;
+                                }
                             }
                         }
                     }
 
-                    if (plugin_idx_ >= 0 && plugin_idx_ < (int)displays_.size()) {
-                        auto disp = displays_[plugin_idx_];
-                        if (disp->isAdded() && disp->isEnabled()) {
-                            if (mouse.button == Mouse::WheelUp)   { config_scroll_ = std::max(0, config_scroll_ - 1); screen_.PostEvent(Event::Custom); return true; }
-                            if (mouse.button == Mouse::WheelDown) { config_scroll_++; screen_.PostEvent(Event::Custom); return true; }
-                            
-                            if (mouse.button == Mouse::Left && mouse.motion == Mouse::Pressed) {
-                                int cry = mouse.y - (terminal.dimy - 12); 
-                                if (cry >= 0 && cry < 10) {
-                                    int item_idx = cry + config_scroll_;
-                                    auto topics = disp->getEnabledTopics();
-                                    if (item_idx >= 0 && item_idx < (int)topics.size()) {
-                                        show_config_modal_ = true;
-                                        config_modal_topic_ = topics[item_idx];
-                                        config_target_display_ = disp;
-                                        config_modal_selected_idx_ = 0;
-                                        screen_.PostEvent(Event::Custom);
-                                        return true;
-                                    }
-                                }
-                            }
-                            if (disp->handle_event(event, config_scroll_)) return true;
-                        }
+                    // Fallback to Teleop/Nav2 or custom display event handling
+                    if (active_disp) {
+                        if (active_disp->handle_event(event, config_scroll_)) return true;
                     }
                 }
             }
@@ -1689,8 +1811,9 @@ bool Visualizer::handle_event(Event event, int mouse_dx) {
         tar_cam_x_ = 0.0f; tar_cam_y_ = 0.0f; tar_cam_z_ = 0.0f; tar_zoom_ = 250.0f;
         return true;
     }
-    if (event == Event::Character('m') || event == Event::Character('M')) {
-        float cx = 0.0f, cy = 0.0f, zoom = 100.0f;
+    if (event == Event::Character('t') || event == Event::Character('T')) {
+        float cx = 0.0f, cy = 0.0f, cz = 0.0f, zoom = 100.0f, yaw = 0.0f;
+        bool found_map = false;
         
         {
             std::lock_guard<std::recursive_mutex> lock(displays_mutex_);
@@ -1700,13 +1823,20 @@ bool Visualizer::handle_event(Event event, int mouse_dx) {
                     if (md) {
                         float raw_cx = md->getCenterX(), raw_cy = md->getCenterY();
                         float mw = md->getWidth(), mh = md->getHeight();
+                        std::string map_frame = md->getFrameId();
                         
                         try {
-                            auto t = tf_buffer_->lookupTransform(fixed_frame_, "map", tf2::TimePointZero);
+                            auto t = tf_buffer_->lookupTransform(fixed_frame_, map_frame, tf2::TimePointZero);
                             tf2::Vector3 map_origin(raw_cx, raw_cy, 0.0f);
                             tf2::Transform tf; tf2::fromMsg(t.transform, tf);
                             tf2::Vector3 target = tf * map_origin;
-                            cx = target.x(); cy = target.y();
+                            cx = (float)target.x(); cy = (float)target.y(); cz = (float)target.z();
+                            
+                            // Align camera yaw with map yaw
+                            double r, p, y;
+                            tf.getBasis().getRPY(r, p, y);
+                            yaw = (float)y;
+                            found_map = true;
                         } catch (...) {
                             cx = raw_cx; cy = raw_cy; 
                         }
@@ -1718,8 +1848,11 @@ bool Visualizer::handle_event(Event event, int mouse_dx) {
                 }
             }
         }
-        tar_pitch_ = 1.57f; tar_yaw_ = 0.0f; tar_dist_ = 10.0f;
-        tar_cam_x_ = cx; tar_cam_y_ = cy; tar_cam_z_ = 0.0f; tar_zoom_ = zoom;
+        tar_pitch_ = 1.57f; // Top-down
+        tar_yaw_ = yaw;
+        tar_dist_ = 10.0f;
+        tar_cam_x_ = cx; tar_cam_y_ = cy; tar_cam_z_ = cz; 
+        tar_zoom_ = zoom;
         return true;
     }
     if (event == Event::Character('+') || event == Event::Character('=')) { tar_zoom_ = tar_zoom_.load() * 1.1f; return true; }
@@ -1742,7 +1875,7 @@ bool Visualizer::handle_event(Event event, int mouse_dx) {
         if (!available_frames_.empty()) { frame_idx_ = (frame_idx_ + 1) % available_frames_.size(); fixed_frame_ = available_frames_[frame_idx_]; }
         return true;
     }
-    if (event == Event::Character('t') || event == Event::Character('T')) {
+    if (event == Event::Character('y') || event == Event::Character('Y')) {
         if (!available_topics_.empty()) {
             topic_idx_ = (topic_idx_ - 1 + available_topics_.size()) % available_topics_.size();
             std::lock_guard<std::recursive_mutex> lock(displays_mutex_);
@@ -1753,7 +1886,7 @@ bool Visualizer::handle_event(Event event, int mouse_dx) {
         }
         return true;
     }
-    if (event == Event::Character('y') || event == Event::Character('Y')) {
+    if (event == Event::Character('h') || event == Event::Character('H')) {
         if (!available_topics_.empty()) {
             topic_idx_ = (topic_idx_ + 1) % available_topics_.size();
             std::lock_guard<std::recursive_mutex> lock(displays_mutex_);
