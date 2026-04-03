@@ -28,6 +28,24 @@ Terminal RViz is a lightweight, high-performance 3D visualizer for ROS 2 that ru
     - **Odometry**: Directional movement history tracking (last 10 poses).
 - **Optimized Pipeline**: 2D fast-path line drawing, dirty-cell buffer tracking, and adaptive robot model density for smooth performance.
 
+## Development Branch (devel) Changes
+
+The `devel` branch includes several major updates and new features that are being prepared for the next release. Here's a checklist of the key changes:
+- [x] **Click Support**: Most of the panels support mouse click.
+- [x] **Expanded Plugin Suite**: Added over 20 new display types including `AccelStamped`, `Effort`, `Path`, `PoseArray`, `Range`, `Temperature`, and `Wrench`.
+- [x] **GPU-Accelerated Rendering**: Experimental support for GPU-based point cloud rendering using OpenCL.
+- [x] **ROS 2 Bag Management**: Integrated `RosbagDisplay` for recording and managing playback directly from the terminal.
+- [x] **Interactive Teleop**: New `TeleopDisplay` for keyboard-based robot control.
+- [x] **Configuration Persistence**: Save and load visualizer setups using a custom `.nathan` format.
+- [x] **Enhanced UI/UX**:
+    - Sidebar hovering and right-click to disable/enable plugins.
+    - Improved modal system for plugin, panel, and topic discovery.
+    - Advanced mouse interaction including click-and-drag configuration adjustment.
+- [x] **Advanced Rendering Improvements**:
+    - Character-level color management and pixel averaging.
+    - Performance-optimized 3D-to-2D projection pipeline with a dedicated `Projector` class.
+- [x] **Improved Topic Discovery**: Automated discovery and categorization of available topics by message type.
+
 ## Prerequisites
 
 - **ROS 2**
