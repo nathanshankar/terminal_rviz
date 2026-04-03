@@ -429,8 +429,8 @@ ftxui::Element RosbagDisplay::render_2d(bool /*nav2_active*/, int config_scroll)
         while (topics_ui.size() < (size_t)max_visible) topics_ui.push_back(filler());
         content.push_back(vbox(std::move(topics_ui)) | size(HEIGHT, EQUAL, 4));
         
-        auto start_btn = text(" [ START ] ") | border | (recording_pid_ > 0 ? dim : bold | color(Color::Red));
-        auto stop_btn = text(" [ STOP ] ") | border | (recording_pid_ <= 0 ? dim : bold | color(Color::White) | inverted);
+        auto start_btn = text(" [ START ] ")  | (recording_pid_ > 0 ? dim : bold | color(Color::Red));
+        auto stop_btn = text(" [ STOP ] ") | (recording_pid_ <= 0 ? dim : bold | color(Color::White) | inverted);
         content.push_back(separator());
         content.push_back(hbox({ filler(), start_btn, stop_btn, filler() }));
     } else {
@@ -465,8 +465,8 @@ ftxui::Element RosbagDisplay::render_2d(bool /*nav2_active*/, int config_scroll)
             text(" " + format_time(current_sec) + " (" + std::to_string((int)(current_progress_ * 100)) + "%)") | dim
         }));
 
-        auto start_btn = text(" [ PLAY ] ") | border | (playback_pid_ > 0 ? dim : bold | color(Color::Green));
-        auto stop_btn = text(" [ STOP ] ") | border | ((playback_pid_ <= 0 && !finished_) ? dim : bold | color(Color::White) | inverted);
+        auto start_btn = text(" [ PLAY ] ") | (playback_pid_ > 0 ? dim : bold | color(Color::Green));
+        auto stop_btn = text(" [ STOP ] ") | ((playback_pid_ <= 0 && !finished_) ? dim : bold | color(Color::Red) | inverted);
         content.push_back(separator());
         content.push_back(hbox({ filler(), start_btn, stop_btn, filler() }));
     }
