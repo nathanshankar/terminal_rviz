@@ -58,10 +58,18 @@ The `devel` branch includes several major updates and new features that are bein
 
 ## Build Instructions
 
-### General Build
+### Without GPU (default)
 ```bash
 cd ~/your_ws
-colcon build --packages-select terminal_rviz --cmake-args -DCMAKE_BUILD_TYPE=Release
+colcon build --packages-select terminal_rviz --cmake-args -DCMAKE_BUILD_TYPE=Release -DWITH_GPU=OFF
+source install/setup.bash
+```
+
+### With GPU (OpenCL-accelerated)
+```bash
+# With GPU (OpenCL-accelerated)
+cd ~/your_ws
+colcon build --packages-select terminal_rviz --cmake-args -DCMAKE_BUILD_TYPE=Release -DWITH_GPU=ON
 source install/setup.bash
 ```
 
@@ -69,26 +77,43 @@ source install/setup.bash
 
 Run the node with optional remappings for namespaced robots, if you are using one:
 
+### Without GPU (default)
 ```bash
 ros2 run terminal_rviz terminal_rviz_node --ros-args \
-  -r __ns:=/{namespace} \
-  -r tf:=/{namespace}/tf \
-  -r tf_static:=/{namespace}/tf_static
+  -r __ns:=/j100_0218 \
+  -r tf:=/j100_0218/tf \
+  -r tf_static:=/j100_0218/tf_static
 ```
+
+### With GPU (OpenCL-accelerated)
+```bash
+ros2 run terminal_rviz terminal_rviz_node --ros-args \
+  -r __ns:=/j100_0218 \
+  -r tf:=/j100_0218/tf \
+  -r tf_static:=/j100_0218/tf_static \
+  -p use_gpu:=true
+```
+
+## Documentation
+
+- **[Plugin Development Guide](PLUGIN_GUIDE.md)**: A comprehensive guide on how to create, implement, and register new display plugins for TViz.
 
 ## Controls
 
 ### Keyboard Shortcuts
-- **0 - 9**: Toggle standard displays (RobotModel, TF, PointCloud, etc.).
-- **0**: Toggle Nav2 Status Dashboard.
+- **P**: Open Add/Manage Plugins modal.
+- **F**: Open Fixed Frame selection modal.
 - **G**: Toggle XY Grid.
 - **V**: Cycle Mouse Tool (NAV2 -> ORBIT -> PAN).
-- **R**: Reset View 
-- **M**: Top-Down View 
+- **R**: Reset View to default perspective.
+- **T**: Top-Down View (automatically centers on Map if available).
 - **Tab**: Cycle plugin focus in the settings sidebar.
-- **T / Y**: Navigate through available Topics or TF Frames.
+- **Y / H**: Navigate through available Topics or TF Frames for the selected plugin.
 - **Space**: Contextual Toggle (Enable/Disable specific Topics or Frames).
-- **Q / Esc**: Quit application.
+- **+ / -**: Zoom In / Out.
+- **Arrow Keys**: Pan Camera (X/Y) or move Z-axis.
+- **W / A / S / D**: Rotate Camera (Pitch/Yaw).
+- **Esc**: Quit application.
 
 ### Nav2 Command Shortcuts 
 - **Enter**: Confirm and Send built waypoint queue to Nav2.
@@ -100,6 +125,8 @@ ros2 run terminal_rviz terminal_rviz_node --ros-args \
 - **Tool: ORBIT**: Click + Drag to rotate the camera.
 - **Tool: PAN**: Click + Drag to slide the view (Window-Relative).
 - **Scroll Wheel**: Zoom In / Out.
+- **Right Click (on sidebar)**: Toggle plugin enable/disable.
+- **Left Click (on 2D UI)**: Interact with sliders, buttons, and topic selections.
 
 ## Performance Notes
 To achieve maximum frame rates, ensure you build with `-DCMAKE_BUILD_TYPE=Release`. The visualizer automatically caps its internal update rate to 20Hz to balance CPU usage with UI responsiveness.
