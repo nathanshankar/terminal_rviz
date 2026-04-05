@@ -37,7 +37,7 @@ public:
     
     void set_status(const std::string& msg) { status_msg_ = msg; }
 
-    enum class Tool { Nav2, Orbit, Pan };
+    enum class Tool { Nav2, Orbit, Pan, MotionPlanning };
     void cycle_tool();
     std::string get_tool_name() const;
 

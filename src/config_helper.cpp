@@ -25,6 +25,7 @@ RelevantSettings ConfigHelper::get_relevant_settings(const std::string& display_
         {"Marker",               {true,  true,  false, false, false, true,  false, true,  false, false}},
         {"MarkerArray",          {true,  true,  false, false, false, true,  false, true,  false, false}},
         {"Map",                  {false, false, false, false, false, false, false, true,  true,  false}},
+        {"MotionPlanning",       {false, false, false, false, false, false, false, true,  false, false}},
         {"Odometry",             {false, true,  false, false, false, false, true,  true,  false, true}},
         {"Path",                 {false, true,  false, false, false, false, false, true,  false, false}},
         {"Pose",                 {false, true,  false, false, false, false, true,  true,  false, false}},

@@ -3,6 +3,7 @@
 #include "terminal_rviz/displays/tf_display.hpp"
 #include "terminal_rviz/displays/image_display.hpp"
 #include "terminal_rviz/displays/nav2_display.hpp"
+#include "terminal_rviz/displays/motion_planning_display.hpp"
 #include "terminal_rviz/displays/map_display.hpp"
 #ifdef HAS_ROSBAG2
 #include "terminal_rviz/displays/rosbag_display.hpp"
@@ -39,7 +40,8 @@ void Visualizer::add_display(std::shared_ptr<Display> display) {
 }
 
 void Visualizer::cycle_tool() {
-    if (current_tool_ == Tool::Nav2) current_tool_ = Tool::Orbit;
+    if (current_tool_ == Tool::Nav2) current_tool_ = Tool::MotionPlanning;
+    else if (current_tool_ == Tool::MotionPlanning) current_tool_ = Tool::Orbit;
     else if (current_tool_ == Tool::Orbit) current_tool_ = Tool::Pan;
     else current_tool_ = Tool::Nav2;
     last_mouse_x_ = 0; last_mouse_y_ = 0;
@@ -47,6 +49,7 @@ void Visualizer::cycle_tool() {
 
 std::string Visualizer::get_tool_name() const {
     if (current_tool_ == Tool::Nav2) return "NAV2";
+    if (current_tool_ == Tool::MotionPlanning) return "PLANNING";
     if (current_tool_ == Tool::Orbit) return "ORBIT";
     return "PAN";
 }
@@ -63,8 +66,30 @@ void Visualizer::run() {
 
             if (handle_event(event, static_cast<int>(dx))) return true;
 
-            if (mouse.button == Mouse::WheelUp)   { tar_zoom_ = tar_zoom_.load() * 1.1f; return true; }
-            if (mouse.button == Mouse::WheelDown) { tar_zoom_ = tar_zoom_.load() / 1.1f; return true; }
+            if (mouse.button == Mouse::WheelUp)   { 
+                if (current_tool_ == Tool::MotionPlanning) {
+                    std::lock_guard<std::recursive_mutex> lock(displays_mutex_);
+                    for (auto& d : displays_) if (d->getName() == "MotionPlanning" && d->isEnabled()) {
+                        auto mp = std::dynamic_pointer_cast<MotionPlanningDisplay>(d);
+                        if (mp && mp->handle_event(Event::Custom)) mp->update_goal_relative(0,0,0, 0,0, 0.1f); // Yaw
+                        else if (mp) mp->update_goal_relative(0,0,0.1f, 0,0,0); // Z
+                        screen_.PostEvent(Event::Custom); return true;
+                    }
+                }
+                tar_zoom_ = tar_zoom_.load() * 1.1f; return true; 
+            }
+            if (mouse.button == Mouse::WheelDown) { 
+                if (current_tool_ == Tool::MotionPlanning) {
+                    std::lock_guard<std::recursive_mutex> lock(displays_mutex_);
+                    for (auto& d : displays_) if (d->getName() == "MotionPlanning" && d->isEnabled()) {
+                        auto mp = std::dynamic_pointer_cast<MotionPlanningDisplay>(d);
+                        if (mp && mp->handle_event(Event::Custom)) mp->update_goal_relative(0,0,0, 0,0,-0.1f); // Yaw
+                        else if (mp) mp->update_goal_relative(0,0,-0.1f, 0,0,0); // Z
+                        screen_.PostEvent(Event::Custom); return true;
+                    }
+                }
+                tar_zoom_ = tar_zoom_.load() / 1.1f; return true; 
+            }
 
             bool is_active = (mouse.motion == Mouse::Pressed);
 
@@ -104,6 +129,42 @@ void Visualizer::run() {
                             } else if (mouse.motion == Mouse::Released) {
                                 if (hit) nav2->update_goal_orientation(wx, wy);
                                 nav2->finalize_selection();
+                            }
+                        }
+                    }
+                } else if (current_tool_ == Tool::MotionPlanning) {
+                    std::shared_ptr<MotionPlanningDisplay> mp = nullptr;
+                    {
+                        std::lock_guard<std::recursive_mutex> lock(displays_mutex_);
+                        for (auto& d : displays_) if (d->getName() == "MotionPlanning") { mp = std::dynamic_pointer_cast<MotionPlanningDisplay>(d); break; }
+                    }
+                    if (mp && mp->isEnabled()) {
+                        int vx = mouse.x - canvas_x_offset_, vy = mouse.y - canvas_y_offset_;
+                        if (vx >= 0 && vy >= 0) {
+                            if (mouse.motion == Mouse::Pressed) {
+                                if (!mp->is_selecting()) {
+                                    bool grabbed = false;
+                                    if (mp->has_target()) {
+                                        auto p = mp->get_goal_pos();
+                                        int sx, sy; float sz;
+                                        if (renderer_.project(p.x, p.y, p.z, sx, sy, sz)) {
+                                            if (std::abs(sx - vx*2) < 20 && std::abs(sy - vy*4) < 20) grabbed = true;
+                                        }
+                                    }
+                                    if (grabbed) {
+                                        mp->start_selection();
+                                    }
+                                } else {
+                                    float factor = tar_dist_.load() / tar_zoom_.load() * 1.0f; // Increased sensitivity
+                                    float y = cur_yaw_, sy = std::sin(y), cy = std::cos(y);
+                                    if (mp->handle_event(Event::Custom)) { 
+                                        mp->update_goal_relative(0,0,0, dy*0.05f, dx*0.05f, 0);
+                                    } else {
+                                        mp->update_goal_relative((dx*sy - dy*cy)*factor, (-dx*cy - dy*sy)*factor, 0, 0,0,0);
+                                    }
+                                }
+                            } else if (mouse.motion == Mouse::Released) {
+                                mp->finalize_selection();
                             }
                         }
                     }
@@ -1860,6 +1921,23 @@ bool Visualizer::handle_event(Event event, int mouse_dx) {
         }
     }
 
+    // --- PRIORITY: Active Plugin Handlers (Input capture) ---
+    {
+        std::lock_guard<std::recursive_mutex> lock(displays_mutex_);
+        for (auto& d : displays_) {
+            if (d->getName() == "Nav2" && d->isAdded() && d->isEnabled()) {
+                if (event == Event::Return ||
+                    event == Event::Character('c') || event == Event::Character('C') ||
+                    event == Event::Special("\x7F") || event == Event::Backspace) {
+                    if (d->handle_event(event)) return true;
+                }
+            }
+            if (d->getName() == "MotionPlanning" && d->isAdded() && d->isEnabled()) {
+                if (d->handle_event(event)) return true;
+            }
+        }
+    }
+
     if (event == Event::Character('p') || event == Event::Character('P')) {
         show_plugin_modal_ = !show_plugin_modal_;
         if (show_plugin_modal_) {
@@ -1897,19 +1975,6 @@ bool Visualizer::handle_event(Event event, int mouse_dx) {
     {
         std::lock_guard<std::recursive_mutex> lock(displays_mutex_);
         for (auto& d : displays_) {
-            if (d->getName() == "Nav2" && d->isAdded() && d->isEnabled()) {
-                if (event == Event::Return ||
-                    event == Event::Character('c') || event == Event::Character('C') ||
-                    event == Event::Special("\x7F") || event == Event::Backspace) {
-                    if (d->handle_event(event)) return true;
-                }
-            }
-        }
-    }
-
-    {
-        std::lock_guard<std::recursive_mutex> lock(displays_mutex_);
-        for (auto& d : displays_) {
             if (d->getName() == "Teleop" && d->isAdded() && d->isEnabled()) {
                 if (d->handle_event(event)) return true;
             }
@@ -1941,7 +2006,6 @@ bool Visualizer::handle_event(Event event, int mouse_dx) {
     if (event == Event::Character('t') || event == Event::Character('T')) {
         float cx = 0.0f, cy = 0.0f, cz = 0.0f, zoom = 100.0f, yaw = 0.0f;
         bool found_map = false;
-        
         {
             std::lock_guard<std::recursive_mutex> lock(displays_mutex_);
             for (auto& d : displays_) {

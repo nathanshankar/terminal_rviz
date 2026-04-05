@@ -15,6 +15,7 @@
 #include "terminal_rviz/displays/legacy_pointcloud_display.hpp"
 #include "terminal_rviz/displays/map_display.hpp"
 #include "terminal_rviz/displays/marker_display.hpp"
+#include "terminal_rviz/displays/motion_planning_display.hpp"
 #include "terminal_rviz/displays/nav2_display.hpp"
 #include "terminal_rviz/displays/odometry_display.hpp"
 #include "terminal_rviz/displays/path_display.hpp"
@@ -124,6 +125,11 @@ int main(int argc, char** argv) {
     auto nav2 = std::make_shared<Nav2Display>(node);
     nav2->onInitialize();
     visualizer->add_display(nav2);
+
+    // Motion Planning
+    auto motion_planning = std::make_shared<MotionPlanningDisplay>(node);
+    motion_planning->onInitialize();
+    visualizer->add_display(motion_planning);
 
     // Odometry
     auto odom = std::make_shared<OdometryDisplay>(node);

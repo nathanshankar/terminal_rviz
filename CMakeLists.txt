@@ -22,6 +22,8 @@ find_package(ament_index_cpp REQUIRED)
 find_package(assimp REQUIRED)
 find_package(std_msgs REQUIRED)
 find_package(nav2_msgs REQUIRED)
+find_package(moveit_msgs REQUIRED)
+find_package(shape_msgs REQUIRED)
 find_package(action_msgs REQUIRED)
 find_package(actionlib_msgs REQUIRED)
 
@@ -75,6 +77,7 @@ add_library(${PROJECT_NAME}_core
   src/displays/legacy_pointcloud_display.cpp
   src/displays/map_display.cpp
   src/displays/marker_display.cpp
+  src/displays/motion_planning_display.cpp
   src/displays/nav2_display.cpp
   src/displays/odometry_display.cpp
   src/displays/path_display.cpp
@@ -95,6 +98,7 @@ add_library(${PROJECT_NAME}_core
   src/displays/wrench_display.cpp
   src/renderer.cpp
   src/gpu_renderer.cpp
+  src/robot_renderer.cpp
 )
 
 target_include_directories(${PROJECT_NAME}_core PUBLIC
@@ -120,6 +124,8 @@ ament_target_dependencies(${PROJECT_NAME}_core
   ament_index_cpp
   std_msgs
   nav2_msgs
+  moveit_msgs
+  shape_msgs
   action_msgs
   actionlib_msgs
   ${ROSBAG2_DEPENDS}
@@ -160,6 +166,8 @@ ament_target_dependencies(terminal_rviz_node
   ament_index_cpp
   std_msgs
   nav2_msgs
+  moveit_msgs
+  shape_msgs
   action_msgs
   actionlib_msgs
   ${ROSBAG2_DEPENDS}
