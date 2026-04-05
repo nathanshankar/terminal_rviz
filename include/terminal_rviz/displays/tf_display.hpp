@@ -26,6 +26,7 @@ public:
     bool isFrameEnabled(const std::string& frame) const;
 
     bool isTopicEnabled(const std::string& topic) const override { return isFrameEnabled(topic); }
+    std::vector<std::string> getEnabledTopics() const override;
     void setTopic(const std::string& topic) override { toggleFrame(topic); }
     TopicConfig getTopicConfig(const std::string& topic) override;
     void setTopicConfig(const std::string& topic, const TopicConfig& config) override;

@@ -30,8 +30,7 @@ RelevantSettings ConfigHelper::get_relevant_settings(const std::string& display_
         {"Pose",                 {false, true,  false, false, false, false, true,  true,  false, false}},
         {"PoseArray",            {false, true,  false, false, false, false, true,  true,  false, false}},
         {"PoseWithCovariance",   {false, true,  false, false, false, false, true,  true,  false, false}},
-        {"Axes",                 {false, false, false, false, false, false, true,  true,  false, false}},
-        {"TF",                   {false, false, false, false, false, false, true,  true,  false, false}},
+        {"TF",                   {true,  true,  false, true,  false, false, true,  true,  false, false}},
         {"Temperature",          {false, true,  false, false, false, false, true,  true,  true,  false}},
         {"FluidPressure",        {false, true,  false, false, false, false, true,  true,  true,  false}},
         {"Illuminance",          {false, true,  false, false, false, false, true,  true,  true,  false}},
@@ -55,7 +54,9 @@ RelevantSettings ConfigHelper::get_relevant_settings(const std::string& display_
 
 ftxui::Element ConfigHelper::render_summary(const std::string& topic, const TopicConfig& cfg) {
     std::string state = cfg.color_style;
-    if (cfg.color_style == "Axis") state += "-" + cfg.axis;
+    if (cfg.color_style == "Axis") {
+        state = "Axis";
+    }
     if (cfg.color_style == "Flat") state = preset_names[cfg.color_index % 10];
     if (cfg.color_style == "RGB") state = "Cloud";
     if (cfg.style == "Map") state = "Map";
@@ -82,8 +83,7 @@ ftxui::Element ConfigHelper::render_edit_modal(const std::string& topic, const T
     };
 
     // 0: Color Mode
-    bool supports_mode = (display_name == "PointCloud2" || display_name == "LaserScan" || display_name == "Marker" || display_name == "MarkerArray");
-    if (supports_mode) {
+    if (r.mode) {
         std::string mode_text = cfg.color_style;
         if (display_name == "PointCloud2" && cfg.color_style == "RGB") mode_text = "RGB (Cloud)";
         add_item(0, hbox({ text(" Mode:    "), text(mode_text) | color(Color::Cyan) | bold }), true);
@@ -94,7 +94,8 @@ ftxui::Element ConfigHelper::render_edit_modal(const std::string& topic, const T
         std::string label = (display_name == "Wrench") ? " Linear:  " : " Color:   ";
         add_item(1, hbox({ text(label), text(preset_names[cfg.color_index % 10]) | color(preset_colors[cfg.color_index % 10]) | bold }), r.color);
     } else if (cfg.color_style == "Axis") {
-        add_item(1, hbox({ text(" Axis:    "), text(cfg.axis) | color(Color::Yellow) | bold }), r.axis);
+        bool show_axis_selection = r.axis && (display_name != "TF");
+        add_item(1, hbox({ text(" Axis:    "), text(cfg.axis) | color(Color::Yellow) | bold }), show_axis_selection);
     }
 
     // 10: Color 2 (Wrench Angular)
@@ -165,7 +166,7 @@ bool ConfigHelper::handle_edit_event(ftxui::Event event, TopicConfig& cfg,
     
     if (r.mode) active_indices.push_back(0);
     if (cfg.color_style == "Flat") { if (r.color) active_indices.push_back(1); }
-    else if (cfg.color_style == "Axis") { if (r.axis) active_indices.push_back(1); }
+    else if (cfg.color_style == "Axis") { if (r.axis && display_name != "TF") active_indices.push_back(1); }
     if (r.color_2 && cfg.color_style == "Flat") active_indices.push_back(10);
     if (r.size) active_indices.push_back(2);
     if (r.alpha) active_indices.push_back(3);

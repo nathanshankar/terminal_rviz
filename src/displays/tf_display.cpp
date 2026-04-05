@@ -26,6 +26,11 @@ std::vector<std::string> TFDisplay::getDiscoveredFrames() {
     return frames;
 }
 
+std::vector<std::string> TFDisplay::getEnabledTopics() const {
+    std::lock_guard<std::mutex> lock(mtx_);
+    return enabled_frames_list_;
+}
+
 void TFDisplay::toggleFrame(const std::string& frame) {
     std::lock_guard<std::mutex> lock(mtx_);
     auto it = std::find(enabled_frames_list_.begin(), enabled_frames_list_.end(), frame);
@@ -36,6 +41,7 @@ void TFDisplay::toggleFrame(const std::string& frame) {
         enabled_frames_list_.push_back(frame);
         TopicConfig cfg;
         cfg.size = 1.0f;
+        cfg.color_style = "Axis";
         configs_[frame] = cfg;
     }
 }
@@ -74,7 +80,7 @@ void TFDisplay::render(RvizRenderer& renderer, ftxui::Canvas& /*canvas*/, const 
         {
             std::lock_guard<std::mutex> lock(mtx_);
             if (configs_.count(frame)) cfg = configs_[frame];
-            else { cfg.size = 1.0f; cfg.alpha = 1.0f; }
+            else { cfg.size = 1.0f; cfg.alpha = 1.0f; cfg.color_style = "Axis"; }
         }
 
         try {
@@ -88,17 +94,38 @@ void TFDisplay::render(RvizRenderer& renderer, ftxui::Canvas& /*canvas*/, const 
             tf2::Transform tf;
             tf2::fromMsg(transform.transform, tf);
 
-            // X (Red)
-            tf2::Vector3 x_pt = tf * tf2::Vector3(axis_len, 0, 0);
-            renderer.draw_line(tx, ty, tz, x_pt.x(), x_pt.y(), x_pt.z(), (uint8_t)255, (uint8_t)0, (uint8_t)0, alpha);
+            // Render axes based on color style
+            if (cfg.color_style == "Flat") {
+                uint8_t r = 255, g = 255, b = 255;
+                static const uint8_t pr[] = {255, 255, 0,   0,   255, 0,   255, 255, 0,   255};
+                static const uint8_t pg[] = {255, 0,   255, 0,   255, 255, 0,   127, 255, 127};
+                static const uint8_t pb[] = {255, 0,   0,   255, 0,   255, 255, 0,   0,   127};
+                int idx = cfg.color_index % 10;
+                r = pr[idx]; g = pg[idx]; b = pb[idx];
 
-            // Y (Green)
-            tf2::Vector3 y_pt = tf * tf2::Vector3(0, axis_len, 0);
-            renderer.draw_line(tx, ty, tz, y_pt.x(), y_pt.y(), y_pt.z(), (uint8_t)0, (uint8_t)255, (uint8_t)0, alpha);
+                // X
+                tf2::Vector3 x_pt = tf * tf2::Vector3(axis_len, 0, 0);
+                renderer.draw_line(tx, ty, tz, x_pt.x(), x_pt.y(), x_pt.z(), r, g, b, alpha);
+                // Y
+                tf2::Vector3 y_pt = tf * tf2::Vector3(0, axis_len, 0);
+                renderer.draw_line(tx, ty, tz, y_pt.x(), y_pt.y(), y_pt.z(), r, g, b, alpha);
+                // Z
+                tf2::Vector3 z_pt = tf * tf2::Vector3(0, 0, axis_len);
+                renderer.draw_line(tx, ty, tz, z_pt.x(), z_pt.y(), z_pt.z(), r, g, b, alpha);
+            } else {
+                // Default "Axis" mode: RGB
+                // X (Red)
+                tf2::Vector3 x_pt = tf * tf2::Vector3(axis_len, 0, 0);
+                renderer.draw_line(tx, ty, tz, x_pt.x(), x_pt.y(), x_pt.z(), (uint8_t)255, (uint8_t)0, (uint8_t)0, alpha);
 
-            // Z (Blue)
-            tf2::Vector3 z_pt = tf * tf2::Vector3(0, 0, axis_len);
-            renderer.draw_line(tx, ty, tz, z_pt.x(), z_pt.y(), z_pt.z(), (uint8_t)0, (uint8_t)0, (uint8_t)255, alpha);
+                // Y (Green)
+                tf2::Vector3 y_pt = tf * tf2::Vector3(0, axis_len, 0);
+                renderer.draw_line(tx, ty, tz, y_pt.x(), y_pt.y(), y_pt.z(), (uint8_t)0, (uint8_t)255, (uint8_t)0, alpha);
+
+                // Z (Blue)
+                tf2::Vector3 z_pt = tf * tf2::Vector3(0, 0, axis_len);
+                renderer.draw_line(tx, ty, tz, z_pt.x(), z_pt.y(), z_pt.z(), (uint8_t)0, (uint8_t)0, (uint8_t)255, alpha);
+            }
 
         } catch (...) {
             continue;

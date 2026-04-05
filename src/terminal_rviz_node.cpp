@@ -4,7 +4,6 @@
 #include "rclcpp/rclcpp.hpp"
 #include "terminal_rviz/visualizer.hpp"
 #include "terminal_rviz/displays/accel_stamped_display.hpp"
-#include "terminal_rviz/displays/axes_display.hpp"
 #include "terminal_rviz/displays/camera_info_display.hpp"
 #include "terminal_rviz/displays/effort_display.hpp"
 #include "terminal_rviz/displays/fluid_pressure_display.hpp"
@@ -63,11 +62,6 @@ int main(int argc, char** argv) {
     auto accel = std::make_shared<AccelStampedDisplay>(node);
     accel->onInitialize();
     visualizer->add_display(accel);
-
-    // Axes
-    auto axes = std::make_shared<AxesDisplay>(node);
-    axes->onInitialize();
-    visualizer->add_display(axes);
 
     // CameraInfo
     auto camera_info = std::make_shared<CameraInfoDisplay>(node);

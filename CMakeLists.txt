@@ -64,7 +64,6 @@ add_library(${PROJECT_NAME}_core
   src/config_helper.cpp
   src/display.cpp
   src/displays/accel_stamped_display.cpp
-  src/displays/axes_display.cpp
   src/displays/camera_info_display.cpp
   src/displays/effort_display.cpp
   src/displays/fluid_pressure_display.cpp
