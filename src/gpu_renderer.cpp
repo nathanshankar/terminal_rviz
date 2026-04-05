@@ -65,10 +65,11 @@ kernel void render_points(
     if (sz < old_z) {
         atomic_min_float(&(dot_buffer[idx].z), sz);
         if (dot_buffer[idx].z == sz) {
-            dot_buffer[idx].r = colors[i*3];
-            dot_buffer[idx].g = colors[i*3+1];
-            dot_buffer[idx].b = colors[i*3+2];
-            dot_buffer[idx].alpha = global_alpha;
+            dot_buffer[idx].r = colors[i*4];
+            dot_buffer[idx].g = colors[i*4+1];
+            dot_buffer[idx].b = colors[i*4+2];
+            float p_alpha = (float)colors[i*4+3] / 255.0f;
+            dot_buffer[idx].alpha = global_alpha * p_alpha;
         }
     }
 }
@@ -115,7 +116,9 @@ kernel void render_lines(
     int err = dx - dy;
     int x = sx1, y = sy1;
 
-    uchar r = colors[i*3], g = colors[i*3+1], b = colors[i*3+2];
+    uchar r = colors[i*4], g = colors[i*4+1], b = colors[i*4+2];
+    float p_alpha = (float)colors[i*4+3] / 255.0f;
+    float final_alpha = global_alpha * p_alpha;
 
     for (int step = 0; step < 2000; ++step) { // Cap steps to prevent infinite loops
         if (x >= 0 && x < width && y >= 0 && y < height) {
@@ -128,7 +131,7 @@ kernel void render_lines(
                     dot_buffer[idx].r = r;
                     dot_buffer[idx].g = g;
                     dot_buffer[idx].b = b;
-                    dot_buffer[idx].alpha = global_alpha;
+                    dot_buffer[idx].alpha = final_alpha;
                 }
             }
         }

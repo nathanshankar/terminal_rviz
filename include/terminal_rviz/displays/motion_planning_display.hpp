@@ -50,6 +50,10 @@ public:
     bool is_selecting() const { return is_selecting_; }
     bool has_target() const { return has_target_; }
     geometry_msgs::msg::Point get_goal_pos() const { return target_pose_.position; }
+    enum class HitPart { NONE, SPHERE, AXIS_X, AXIS_Y, AXIS_Z };
+    HitPart last_hit_part_ = HitPart::NONE;
+
+    bool is_hit(int vx, int vy, const RvizRenderer& renderer);
 
 private:
     void robot_description_callback(const std_msgs::msg::String::SharedPtr msg);

@@ -220,15 +220,44 @@ void MotionPlanningDisplay::update_goal_relative(float dx, float dy, float dz, f
     if (!has_target_) return;
     
     goal_name_ = "Interactive";
-    target_pose_.position.x += dx;
-    target_pose_.position.y += dy;
-    target_pose_.position.z += dz;
-    
-    if (std::abs(dr) > 1e-4 || std::abs(dp) > 1e-4 || std::abs(dyaw) > 1e-4) {
+
+    if (dr != 0 || dp != 0 || dyaw != 0) {
+        // Rotation mode
         tf2::Quaternion q_old, q_rot;
         tf2::fromMsg(target_pose_.orientation, q_old);
         q_rot.setRPY(dr, dp, dyaw);
         target_pose_.orientation = tf2::toMsg(q_rot * q_old);
+    } else {
+        // Translation mode
+        if (last_hit_part_ == HitPart::SPHERE || last_hit_part_ == HitPart::NONE) {
+            target_pose_.position.x += dx;
+            target_pose_.position.y += dy;
+            target_pose_.position.z += dz;
+        } else {
+            // Constrain to axis
+            tf2::Transform goal_tf; tf2::fromMsg(target_pose_, goal_tf);
+            tf2::Vector3 delta(dx, dy, dz);
+            
+            if (last_hit_part_ == HitPart::AXIS_X) {
+                tf2::Vector3 axis = goal_tf.getBasis().getColumn(0);
+                float projection = delta.dot(axis);
+                target_pose_.position.x += axis.x() * projection;
+                target_pose_.position.y += axis.y() * projection;
+                target_pose_.position.z += axis.z() * projection;
+            } else if (last_hit_part_ == HitPart::AXIS_Y) {
+                tf2::Vector3 axis = goal_tf.getBasis().getColumn(1);
+                float projection = delta.dot(axis);
+                target_pose_.position.x += axis.x() * projection;
+                target_pose_.position.y += axis.y() * projection;
+                target_pose_.position.z += axis.z() * projection;
+            } else if (last_hit_part_ == HitPart::AXIS_Z) {
+                tf2::Vector3 axis = goal_tf.getBasis().getColumn(2);
+                float projection = delta.dot(axis);
+                target_pose_.position.x += axis.x() * projection;
+                target_pose_.position.y += axis.y() * projection;
+                target_pose_.position.z += axis.z() * projection;
+            }
+        }
     }
     solve_ik();
 }
@@ -568,6 +597,49 @@ bool MotionPlanningDisplay::handle_event(ftxui::Event event, int /*scroll_offset
     if (event == ftxui::Event::Character('c') || event == ftxui::Event::Character('C')) { cancel(); return true; }
     if (event == ftxui::Event::Character('r') || event == ftxui::Event::Character('R')) { rotate_mode_ = !rotate_mode_; return true; }
     if (event == ftxui::Event::Character('0')) { has_target_ = false; return true; } 
+    if (event == ftxui::Event::Custom) return rotate_mode_;
+    return false;
+}
+
+bool MotionPlanningDisplay::is_hit(int vx, int vy, const RvizRenderer& renderer) {
+    if (!enabled_ || !has_target_) return false;
+    std::lock_guard<std::mutex> lock(mtx_);
+    last_hit_part_ = HitPart::NONE;
+
+    auto check_dist = [&](float x, float y, float z, int threshold) {
+        int sx, sy; float sz;
+        if (renderer.project(x, y, z, sx, sy, sz)) {
+            return (std::abs(sx - vx*2) < threshold && std::abs(sy - vy*4) < threshold);
+        }
+        return false;
+    };
+
+    // 1. Check sphere center
+    if (check_dist(target_pose_.position.x, target_pose_.position.y, target_pose_.position.z, 20)) {
+        last_hit_part_ = HitPart::SPHERE;
+        return true;
+    }
+
+    // 2. Check points along axes - Check each axis fully to avoid shadowing
+    tf2::Transform goal_tf; tf2::fromMsg(target_pose_, goal_tf);
+    float al = 0.5f;
+    
+    // Check X (Red)
+    for (float d = 0.05f; d <= al; d += 0.05f) {
+        tf2::Vector3 p = goal_tf * tf2::Vector3(d, 0, 0);
+        if (check_dist(p.x(), p.y(), p.z(), 18)) { last_hit_part_ = HitPart::AXIS_X; return true; }
+    }
+    // Check Y (Green)
+    for (float d = 0.05f; d <= al; d += 0.05f) {
+        tf2::Vector3 p = goal_tf * tf2::Vector3(0, d, 0);
+        if (check_dist(p.x(), p.y(), p.z(), 18)) { last_hit_part_ = HitPart::AXIS_Y; return true; }
+    }
+    // Check Z (Blue)
+    for (float d = 0.05f; d <= al; d += 0.05f) {
+        tf2::Vector3 p = goal_tf * tf2::Vector3(0, 0, d);
+        if (check_dist(p.x(), p.y(), p.z(), 18)) { last_hit_part_ = HitPart::AXIS_Z; return true; }
+    }
+
     return false;
 }
 
@@ -613,16 +685,40 @@ void MotionPlanningDisplay::render(RvizRenderer& renderer, ftxui::Canvas& /*canv
         uint8_t cr = 255, cg = 100, cb = 0; // Orange
         if (is_selecting_) { cr = 0; cg = 255; cb = 0; }
         
-        renderer.draw_sphere(x, y, z, 0.1f, cr, cg, cb, 0.8f);
-        renderer.draw_line(x, y, 0, x, y, z, cr, cg, cb, 0.3f);
+        renderer.draw_sphere(x, y, z, 0.1f, cr, cg, cb, 0.2f); // Very transparent sphere
+        renderer.draw_line(x, y, 0, x, y, z, cr, cg, cb, 0.1f);
         
-        // Render Orientation Axes at goal
+        // Render Orientation Axes at goal - Thicker but transparent
         tf2::Transform goal_tf; tf2::fromMsg(target_pose_, goal_tf);
-        float al = 0.3f;
+        float al = 0.5f; 
         tf2::Vector3 ax = goal_tf * tf2::Vector3(al,0,0), ay = goal_tf * tf2::Vector3(0,al,0), az = goal_tf * tf2::Vector3(0,0,al);
-        renderer.draw_line(x, y, z, ax.x(), ax.y(), ax.z(), 255, 0, 0, 1.0f);
-        renderer.draw_line(x, y, z, ay.x(), ay.y(), ay.z(), 0, 255, 0, 1.0f);
-        renderer.draw_line(x, y, z, az.x(), az.y(), az.z(), 0, 100, 255, 1.0f);
+        
+        auto draw_thick_line = [&](float x1, float y1, float z1, float x2, float y2, float z2, uint8_t r, uint8_t g, uint8_t b) {
+            tf2::Vector3 dir(x2 - x1, y2 - y1, z2 - z1);
+            if (dir.length() < 1e-6) return;
+            dir.normalize();
+            
+            tf2::Vector3 perp1;
+            if (std::abs(dir.z()) < 0.9f) perp1 = tf2::Vector3(-dir.y(), dir.x(), 0);
+            else perp1 = tf2::Vector3(0, -dir.z(), dir.y());
+            perp1.normalize();
+            tf2::Vector3 perp2 = dir.cross(perp1).normalized();
+            
+            float off = 0.012f;
+            // Draw only the corners of the 3x3 grid to make it "hollow" and less dense
+            for (float d1 : {-off, off}) {
+                for (float d2 : {-off, off}) {
+                    tf2::Vector3 o = perp1 * d1 + perp2 * d2;
+                    renderer.draw_line(x1+o.x(), y1+o.y(), z1+o.z(), x2+o.x(), y2+o.y(), z2+o.z(), r, g, b, 0.3f);
+                }
+            }
+            // Draw the center line slightly brighter
+            renderer.draw_line(x1, y1, z1, x2, y2, z2, r, g, b, 0.4f);
+        };
+
+        draw_thick_line(x, y, z, ax.x(), ax.y(), ax.z(), 255, 0, 0);
+        draw_thick_line(x, y, z, ay.x(), ay.y(), ay.z(), 0, 255, 0);
+        draw_thick_line(x, y, z, az.x(), az.y(), az.z(), 0, 100, 255);
     }
 }
 

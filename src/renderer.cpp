@@ -125,6 +125,7 @@ void RvizRenderer::draw_point(float x, float y, float z, uint8_t r, uint8_t g, u
     if (use_gpu_) {
         gpu_points_3d_.push_back(x); gpu_points_3d_.push_back(y); gpu_points_3d_.push_back(z);
         gpu_points_color_.push_back(r); gpu_points_color_.push_back(g); gpu_points_color_.push_back(b);
+        gpu_points_color_.push_back(static_cast<uint8_t>(alpha * 255.0f));
         return;
     }
     int sx, sy; float sz;
@@ -140,6 +141,7 @@ void RvizRenderer::draw_line(float x1, float y1, float z1, float x2, float y2, f
         gpu_lines_3d_.push_back(x1); gpu_lines_3d_.push_back(y1); gpu_lines_3d_.push_back(z1);
         gpu_lines_3d_.push_back(x2); gpu_lines_3d_.push_back(y2); gpu_lines_3d_.push_back(z2);
         gpu_lines_color_.push_back(r); gpu_lines_color_.push_back(g); gpu_lines_color_.push_back(b);
+        gpu_lines_color_.push_back(static_cast<uint8_t>(alpha * 255.0f));
         return;
     }
     int sx1, sy1, sx2, sy2; float sz1, sz2;

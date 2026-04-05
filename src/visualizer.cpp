@@ -143,15 +143,7 @@ void Visualizer::run() {
                         if (vx >= 0 && vy >= 0) {
                             if (mouse.motion == Mouse::Pressed) {
                                 if (!mp->is_selecting()) {
-                                    bool grabbed = false;
-                                    if (mp->has_target()) {
-                                        auto p = mp->get_goal_pos();
-                                        int sx, sy; float sz;
-                                        if (renderer_.project(p.x, p.y, p.z, sx, sy, sz)) {
-                                            if (std::abs(sx - vx*2) < 20 && std::abs(sy - vy*4) < 20) grabbed = true;
-                                        }
-                                    }
-                                    if (grabbed) {
+                                    if (mp->is_hit(vx, vy, renderer_)) {
                                         mp->start_selection();
                                     }
                                 } else {
@@ -854,7 +846,7 @@ Element Visualizer::render_frame() {
         {
             std::lock_guard<std::recursive_mutex> lock(displays_mutex_);
             for (size_t i = 0; i < displays_.size(); ++i) {
-                bool is_panel = (displays_[i]->getName() == "Nav2" || displays_[i]->getName() == "Teleop" || displays_[i]->getName() == "Rosbag");
+                bool is_panel = (displays_[i]->getName() == "Nav2" || displays_[i]->getName() == "Teleop" || displays_[i]->getName() == "Rosbag" || displays_[i]->getName() == "MotionPlanning");
                 if (modal_tab_idx_ == 0 && !is_panel) filtered_indices.push_back(i);
                 else if (modal_tab_idx_ == 1 && is_panel) filtered_indices.push_back(i);
             }
@@ -1207,7 +1199,7 @@ bool Visualizer::handle_event(Event event, int mouse_dx) {
         {
             std::lock_guard<std::recursive_mutex> lock(displays_mutex_);
             for (size_t i = 0; i < displays_.size(); ++i) {
-                bool is_panel = (displays_[i]->getName() == "Nav2" || displays_[i]->getName() == "Teleop" || displays_[i]->getName() == "Rosbag");
+                bool is_panel = (displays_[i]->getName() == "Nav2" || displays_[i]->getName() == "Teleop" || displays_[i]->getName() == "Rosbag" || displays_[i]->getName() == "MotionPlanning");
                 if (modal_tab_idx_ == 0 && !is_panel) filtered_indices.push_back(i);
                 else if (modal_tab_idx_ == 1 && is_panel) filtered_indices.push_back(i);
             }
