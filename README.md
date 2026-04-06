@@ -14,7 +14,9 @@ Terminal RViz is a high-performance 3D visualizer for ROS 2 that runs entirely w
 | **ROS 2 Jazzy** | [![Jazzy Build Status](https://img.shields.io/github/actions/workflow/status/nathanshankar/terminal_rviz/ros_build_jazzy.yml?branch=main&label=Build)](https://github.com/nathanshankar/terminal_rviz/actions/workflows/ros_build_jazzy.yml) |
 
 ## Demonstration
-https://github.com/user-attachments/assets/415fd199-c0a0-4fb4-b8bc-e0d49c74041c
+<!--- https://github.com/user-attachments/assets/415fd199-c0a0-4fb4-b8bc-e0d49c74041c --->
+https://github.com/user-attachments/assets/7de335d5-dcbd-4406-924a-e97399f521e4
+
 
 ## Features
 
