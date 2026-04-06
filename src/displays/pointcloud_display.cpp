@@ -153,7 +153,7 @@ void PointCloudDisplay::render(RvizRenderer& renderer, ftxui::Canvas& /*canvas*/
             std::vector<float> gpu_pts;
             std::vector<uint8_t> gpu_cols;
             gpu_pts.reserve((total_points / skip) * 3);
-            gpu_cols.reserve((total_points / skip) * 3);
+            gpu_cols.reserve((total_points / skip) * 4); // 4 bytes for RGBA
 
             for (size_t i = 0; i < total_points; i += skip, iter_x += skip, iter_y += skip, iter_z += skip) {
                 gpu_pts.push_back(*iter_x); gpu_pts.push_back(*iter_y); gpu_pts.push_back(*iter_z);
@@ -179,6 +179,7 @@ void PointCloudDisplay::render(RvizRenderer& renderer, ftxui::Canvas& /*canvas*/
                     else { r_c = 0; g_c = static_cast<uint8_t>((1.0f - v) * 1020); b_c = 255; }
                 }
                 gpu_cols.push_back(r_c); gpu_cols.push_back(g_c); gpu_cols.push_back(b_c);
+                gpu_cols.push_back(255); // Alpha channel
             }
             renderer.gpu_render_points(gpu_pts, gpu_cols, projector, cfg.alpha);
         } else {
