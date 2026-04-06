@@ -26,7 +26,7 @@ jobs:
         shell: bash
         run: |
           apt update
-          apt install -y build-essential cmake git libassimp-dev
+          apt install -y build-essential cmake git libassimp-dev ros-jazzy-moveit-msgs ros-jazzy-shape-msgs
 
       - name: rosdep install
         shell: bash

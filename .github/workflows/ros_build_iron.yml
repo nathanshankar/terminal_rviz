@@ -22,7 +22,7 @@ jobs:
           echo "deb [arch=$(dpkg --print-architecture) signed-by=/usr/share/keyrings/pkgs-osrf-archive-keyring.gpg] http://packages.osrfoundation.org/gazebo/ubuntu-stable $(lsb_release -cs) main" | tee /etc/apt/sources.list.d/gazebo-stable.list > /dev/null
           apt update
           apt install -y build-essential cmake git libassimp-dev
-          apt install -y ros-iron-nav2-msgs
+          apt install -y ros-iron-nav2-msgs ros-iron-moveit-msgs ros-iron-shape-msgs
 
       - name: rosdep install
         shell: bash
