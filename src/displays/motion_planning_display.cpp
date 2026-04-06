@@ -608,9 +608,8 @@ bool MotionPlanningDisplay::handle_event(ftxui::Event event, int /*scroll_offset
     }
 
     if (event == ftxui::Event::Character('p') || event == ftxui::Event::Character('P')) { send_goal(true); return true; }
-    if (event == ftxui::Event::Character('e') || event == ftxui::Event::Character('E')) { execute(); return true; }
+    if (event == ftxui::Event::Return) { execute(); return true; }
     if (event == ftxui::Event::Character('c') || event == ftxui::Event::Character('C')) { cancel(); return true; }
-    if (event == ftxui::Event::Character('r') || event == ftxui::Event::Character('R')) { rotate_mode_ = !rotate_mode_; return true; }
     if (event == ftxui::Event::Character('0')) { has_target_ = false; return true; } 
     if (event == ftxui::Event::Custom) return rotate_mode_;
     return false;
@@ -783,7 +782,7 @@ ftxui::Element MotionPlanningDisplay::render_2d(bool /*nav2_active*/, int /*conf
     using namespace ftxui;
 
     auto info = vbox({
-        hbox({ text(" Motion Planning ") | bold | color(Color::Orange1), separator(), text(" [v] Tool | [p] Plan | [e] Exec | [r] Rot ") | dim }),
+        hbox({ text(" Motion Planning ") | bold | color(Color::Orange1), separator(), text(" [p] Plan| [Enter] Exec | [c] Cncl | [0] Mrkr") | dim }),
         separator(),
         hbox({ text("Group:  "), text(group_name_) | color(Color::Cyan) | bold, filler(), text(" [EDIT] ") | color(Color::Yellow) | bold }),
         hbox({ text("Goal:   "), text(goal_name_) | color(Color::Blue) | bold, filler(), text(" [EDIT] ") | color(Color::Yellow) | bold }),

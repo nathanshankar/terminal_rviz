@@ -51,7 +51,7 @@ ftxui::Element TeleopDisplay::render_2d(bool /*nav2_active*/, int /*config_scrol
 
     auto key_map = vbox({
         hbox({ text("  u  i  o  ") | bold | color(Color::Yellow), text("   [q/z]: Speed +/-") | dim }),
-        hbox({ text("  j  k  l  ") | bold | color(Color::Yellow), text("   [w/x]: Turn  +/-") | dim }),
+        hbox({ text("  j  k  l  ") | bold | color(Color::Yellow), text("   [e/c]: Turn  +/-") | dim }),
         hbox({ text("  m  ,  .  ") | bold | color(Color::Yellow), text("   [k/Spc]: STOP") | dim }),
     });
 
@@ -97,11 +97,11 @@ bool TeleopDisplay::handle_event(ftxui::Event event, int /*scroll_offset*/) {
             speed_ *= 0.9;
             last_key_ = "Speed Down";
             return true;
-        } else if (key == "w") {
+        } else if (key == "e") {
             turn_ *= 1.1;
             last_key_ = "Turn Up";
             return true;
-        } else if (key == "x") {
+        } else if (key == "c") {
             turn_ *= 0.9;
             last_key_ = "Turn Down";
             return true;

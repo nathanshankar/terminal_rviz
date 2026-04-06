@@ -1,6 +1,6 @@
 # TViz
 
-Terminal RViz is a lightweight, high-performance 3D visualizer for ROS 2 that runs entirely within a terminal environment. Built using FTXUI and a custom Braille-based software renderer, it provides a feature-rich alternative to standard RViz for headless systems, remote SSH sessions, or resource-constrained environments.
+Terminal RViz is a high-performance 3D visualizer for ROS 2 that runs entirely within a terminal environment. Built using FTXUI and a custom Braille-based software renderer, it provides a feature-rich alternative to standard RViz for headless systems, remote SSH sessions, or resource-constrained environments. For a lightweight version of this package use the [lite](https://github.com/nathanshankar/terminal_rviz/tree/lite) branch of this repository.
 
 <img width="1842" height="951" alt="image" src="https://github.com/user-attachments/assets/d30913ef-d802-4d93-b3ee-ce58a6a58728" />
 
@@ -30,7 +30,7 @@ https://github.com/user-attachments/assets/415fd199-c0a0-4fb4-b8bc-e0d49c74041c
     - **Odometry**: Directional movement history tracking (last 10 poses).
 - **Optimized Pipeline**: 2D fast-path line drawing, dirty-cell buffer tracking, and adaptive robot model density for smooth performance.
 
-## Development Branch (devel) Changes
+## Changes
 
 The `devel` branch includes several major updates and new features that are being prepared for the next release. Here's a checklist of the key changes:
 - [x] **Click Support**: Most of the panels support mouse click.
@@ -47,6 +47,7 @@ The `devel` branch includes several major updates and new features that are bein
     - Character-level color management and pixel averaging.
     - Performance-optimized 3D-to-2D projection pipeline with a dedicated `Projector` class.
 - [x] **Improved Topic Discovery**: Automated discovery and categorization of available topics by message type.
+- [x] **Motion Planning**: Added motion planning panel for manipulators similar to Rviz. 
 
 ## Prerequisites
 
@@ -55,6 +56,7 @@ The `devel` branch includes several major updates and new features that are bein
     - `rclcpp`, `rclcpp_action`
     - `sensor_msgs`, `nav_msgs`, `nav2_msgs`, `visualization_msgs`, `geometry_msgs`, `std_msgs`
     - `tf2`, `tf2_ros`, `tf2_geometry_msgs`
+    - `moveit_msgs`, `shape_msgs`, `action_msgs`
     - `urdf`, `assimp`, `ament_index_cpp`
     - `ftxui` (Library handled via CMake FetchContent or system install)
 
@@ -101,26 +103,49 @@ ros2 run terminal_rviz terminal_rviz_node --ros-args \
 - **[Plugin Development Guide](PLUGIN_GUIDE.md)**: A comprehensive guide on how to create, implement, and register new display plugins for TViz.
 
 ## Controls
+ Most of the panels have click enabled, so you should just be able to hover and select. Here are some parts of the temrinal that use keymappings: 
 
 ### Keyboard Shortcuts
-- **P**: Open Add/Manage Plugins modal.
-- **F**: Open Fixed Frame selection modal.
+- **P**: Add/Manage Plugins (Modal).
+- **F**: Fixed Frame selection (Modal).
 - **G**: Toggle XY Grid.
 - **V**: Cycle Mouse Tool (NAV2 -> ORBIT -> PAN).
 - **R**: Reset View to default perspective.
 - **T**: Top-Down View (automatically centers on Map if available).
 - **Tab**: Cycle plugin focus in the settings sidebar.
-- **Y / H**: Navigate through available Topics or TF Frames for the selected plugin.
+- **Y / H**: Navigate through available Topics for the selected plugin.
 - **Space**: Contextual Toggle (Enable/Disable specific Topics or Frames).
-- **+ / -**: Zoom In / Out.
-- **Arrow Keys**: Pan Camera (X/Y) or move Z-axis.
-- **W / A / S / D**: Rotate Camera (Pitch/Yaw).
+- **+ / =**: Zoom In.
+- **- / _**: Zoom Out.
+- **Arrow Keys (Up/Down)**: Pan Camera along Z-axis.
+- **Arrow Keys (Left/Right)**: Pan Camera along Y-axis.
+- **PageUp / PageDown**: Pan Camera along X-axis.
+- **W / S**: Rotate Camera Pitch.
+- **A / D**: Rotate Camera Yaw.
 - **Esc**: Quit application.
 
-### Nav2 Command Shortcuts 
+### Plugin-Specific Shortcuts
+
+**Nav2 Dashboard**:
 - **Enter**: Confirm and Send built waypoint queue to Nav2.
-- **Backspace**: Remove the last added waypoint from the queue.
+- **Backspace / Del**: Remove the last added waypoint from the queue.
 - **C**: Immediate Navigation Cancel and queue clear.
+
+**Motion Planning**:
+- **P**: Plan motion to current interactive target.
+- **Enter**: Execute planned motion trajectory.
+- **C**: Cancel active motion or planning request.
+- **0**: Hide/Reset the target goal marker.
+
+**Teleop Keyboard**:
+- **i**: Move Forward.
+- **u / o**: Move Forward + Turn Left/Right.
+- **j / l**: Turn Left / Right.
+- **m / .**: Move Backward + Turn Left/Right.
+- **,**: Move Backward.
+- **k / Space**: STOP.
+- **q / z**: Increase / Decrease Linear Speed (10%).
+- **e / c**: Increase / Decrease Angular Rate (10%).
 
 ### Mouse Interaction (Touchpad Optimized)
 - **Tool: NAV2**: Click + Drag to place a 3D waypoint arrow.
