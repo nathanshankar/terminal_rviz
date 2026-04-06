@@ -222,19 +222,34 @@ void MotionPlanningDisplay::update_goal_relative(float dx, float dy, float dz, f
     goal_name_ = "Interactive";
 
     if (dr != 0 || dp != 0 || dyaw != 0) {
-        // Rotation mode
+        // Explicit rotation call (e.g. from keys)
         tf2::Quaternion q_old, q_rot;
         tf2::fromMsg(target_pose_.orientation, q_old);
         q_rot.setRPY(dr, dp, dyaw);
         target_pose_.orientation = tf2::toMsg(q_rot * q_old);
     } else {
-        // Translation mode
+        // Translation or Mouse-based Rotation
         if (last_hit_part_ == HitPart::SPHERE || last_hit_part_ == HitPart::NONE) {
             target_pose_.position.x += dx;
             target_pose_.position.y += dy;
             target_pose_.position.z += dz;
+        } else if (last_hit_part_ == HitPart::RING_ROLL || last_hit_part_ == HitPart::RING_PITCH || last_hit_part_ == HitPart::RING_YAW) {
+            // Dragging a ring rotates around that axis
+            tf2::Quaternion q_old; tf2::fromMsg(target_pose_.orientation, q_old);
+            tf2::Transform goal_tf(q_old);
+            
+            tf2::Vector3 axis;
+            if (last_hit_part_ == HitPart::RING_ROLL) axis = goal_tf.getBasis().getColumn(0);
+            else if (last_hit_part_ == HitPart::RING_PITCH) axis = goal_tf.getBasis().getColumn(1);
+            else axis = goal_tf.getBasis().getColumn(2);
+
+            // Determine rotation amount from mouse movement (dy or dx depending on view could be complex, 
+            // using a simple delta for now)
+            float angle = (std::abs(dx) > std::abs(dy) ? dx : -dy) * 0.05f;
+            tf2::Quaternion q_rot(axis, angle);
+            target_pose_.orientation = tf2::toMsg(q_rot * q_old);
         } else {
-            // Constrain to axis
+            // Constrain to axis (Translation)
             tf2::Transform goal_tf; tf2::fromMsg(target_pose_, goal_tf);
             tf2::Vector3 delta(dx, dy, dz);
             
@@ -640,6 +655,28 @@ bool MotionPlanningDisplay::is_hit(int vx, int vy, const RvizRenderer& renderer)
         if (check_dist(p.x(), p.y(), p.z(), 18)) { last_hit_part_ = HitPart::AXIS_Z; return true; }
     }
 
+    // 3. Check points along rotation rings
+    auto check_ring = [&](const tf2::Vector3& axis, HitPart part) {
+        const int segments = 32;
+        float radius = 0.35f;
+        tf2::Vector3 perp1;
+        if (std::abs(axis.z()) < 0.9f) perp1 = tf2::Vector3(-axis.y(), axis.x(), 0).normalized();
+        else perp1 = tf2::Vector3(0, -axis.z(), axis.y()).normalized();
+        tf2::Vector3 perp2 = axis.cross(perp1).normalized();
+
+        for (int i = 0; i < segments; ++i) {
+            float a = 2.0f * M_PI * i / segments;
+            tf2::Vector3 p = tf2::Vector3(target_pose_.position.x, target_pose_.position.y, target_pose_.position.z) + 
+                            (perp1 * std::cos(a) + perp2 * std::sin(a)) * radius;
+            if (check_dist(p.x(), p.y(), p.z(), 15)) { last_hit_part_ = part; return true; }
+        }
+        return false;
+    };
+
+    if (check_ring(goal_tf.getBasis().getColumn(0), HitPart::RING_ROLL)) return true;
+    if (check_ring(goal_tf.getBasis().getColumn(1), HitPart::RING_PITCH)) return true;
+    if (check_ring(goal_tf.getBasis().getColumn(2), HitPart::RING_YAW)) return true;
+
     return false;
 }
 
@@ -685,10 +722,7 @@ void MotionPlanningDisplay::render(RvizRenderer& renderer, ftxui::Canvas& /*canv
         uint8_t cr = 255, cg = 100, cb = 0; // Orange
         if (is_selecting_) { cr = 0; cg = 255; cb = 0; }
         
-        renderer.draw_sphere(x, y, z, 0.1f, cr, cg, cb, 0.2f); // Very transparent sphere
-        renderer.draw_line(x, y, 0, x, y, z, cr, cg, cb, 0.1f);
-        
-        // Render Orientation Axes at goal - Thicker but transparent
+        // Render Orientation Axes and Rings
         tf2::Transform goal_tf; tf2::fromMsg(target_pose_, goal_tf);
         float al = 0.5f; 
         tf2::Vector3 ax = goal_tf * tf2::Vector3(al,0,0), ay = goal_tf * tf2::Vector3(0,al,0), az = goal_tf * tf2::Vector3(0,0,al);
@@ -697,28 +731,49 @@ void MotionPlanningDisplay::render(RvizRenderer& renderer, ftxui::Canvas& /*canv
             tf2::Vector3 dir(x2 - x1, y2 - y1, z2 - z1);
             if (dir.length() < 1e-6) return;
             dir.normalize();
-            
             tf2::Vector3 perp1;
-            if (std::abs(dir.z()) < 0.9f) perp1 = tf2::Vector3(-dir.y(), dir.x(), 0);
-            else perp1 = tf2::Vector3(0, -dir.z(), dir.y());
-            perp1.normalize();
+            if (std::abs(dir.z()) < 0.9f) perp1 = tf2::Vector3(-dir.y(), dir.x(), 0).normalized();
+            else perp1 = tf2::Vector3(0, -dir.z(), dir.y()).normalized();
             tf2::Vector3 perp2 = dir.cross(perp1).normalized();
-            
             float off = 0.012f;
-            // Draw only the corners of the 3x3 grid to make it "hollow" and less dense
             for (float d1 : {-off, off}) {
                 for (float d2 : {-off, off}) {
                     tf2::Vector3 o = perp1 * d1 + perp2 * d2;
                     renderer.draw_line(x1+o.x(), y1+o.y(), z1+o.z(), x2+o.x(), y2+o.y(), z2+o.z(), r, g, b, 0.3f);
                 }
             }
-            // Draw the center line slightly brighter
             renderer.draw_line(x1, y1, z1, x2, y2, z2, r, g, b, 0.4f);
         };
 
-        draw_thick_line(x, y, z, ax.x(), ax.y(), ax.z(), 255, 0, 0);
-        draw_thick_line(x, y, z, ay.x(), ay.y(), ay.z(), 0, 255, 0);
-        draw_thick_line(x, y, z, az.x(), az.y(), az.z(), 0, 100, 255);
+        auto draw_thick_circle = [&](const tf2::Vector3& axis, uint8_t r, uint8_t g, uint8_t b) {
+            const int segments = 24;
+            float radius = 0.35f;
+            tf2::Vector3 perp1;
+            if (std::abs(axis.z()) < 0.9f) perp1 = tf2::Vector3(-axis.y(), axis.x(), 0).normalized();
+            else perp1 = tf2::Vector3(0, -axis.z(), axis.y()).normalized();
+            tf2::Vector3 perp2 = axis.cross(perp1).normalized();
+            for (int i = 0; i < segments; ++i) {
+                float a1 = 2.0f * M_PI * i / segments, a2 = 2.0f * M_PI * (i + 1) / segments;
+                tf2::Vector3 p1 = tf2::Vector3(x,y,z) + (perp1 * std::cos(a1) + perp2 * std::sin(a1)) * radius;
+                tf2::Vector3 p2 = tf2::Vector3(x,y,z) + (perp1 * std::cos(a2) + perp2 * std::sin(a2)) * radius;
+                renderer.draw_line(p1.x(), p1.y(), p1.z(), p2.x(), p2.y(), p2.z(), r, g, b, 0.4f);
+            }
+        };
+
+        // Conditional Rendering: Only show the active handle if selecting
+        if (!is_selecting_ || last_hit_part_ == HitPart::SPHERE || last_hit_part_ == HitPart::AXIS_X) 
+            draw_thick_line(x, y, z, ax.x(), ax.y(), ax.z(), 255, 0, 0);
+        if (!is_selecting_ || last_hit_part_ == HitPart::SPHERE || last_hit_part_ == HitPart::AXIS_Y)
+            draw_thick_line(x, y, z, ay.x(), ay.y(), ay.z(), 0, 255, 0);
+        if (!is_selecting_ || last_hit_part_ == HitPart::SPHERE || last_hit_part_ == HitPart::AXIS_Z)
+            draw_thick_line(x, y, z, az.x(), az.y(), az.z(), 0, 100, 255);
+
+        if (!is_selecting_ || last_hit_part_ == HitPart::SPHERE || last_hit_part_ == HitPart::RING_ROLL)
+            draw_thick_circle(goal_tf.getBasis().getColumn(0), 255, 0, 0);
+        if (!is_selecting_ || last_hit_part_ == HitPart::SPHERE || last_hit_part_ == HitPart::RING_PITCH)
+            draw_thick_circle(goal_tf.getBasis().getColumn(1), 0, 255, 0);
+        if (!is_selecting_ || last_hit_part_ == HitPart::SPHERE || last_hit_part_ == HitPart::RING_YAW)
+            draw_thick_circle(goal_tf.getBasis().getColumn(2), 0, 100, 255);
     }
 }
 

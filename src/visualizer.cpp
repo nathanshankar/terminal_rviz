@@ -40,10 +40,27 @@ void Visualizer::add_display(std::shared_ptr<Display> display) {
 }
 
 void Visualizer::cycle_tool() {
-    if (current_tool_ == Tool::Nav2) current_tool_ = Tool::MotionPlanning;
+    bool nav2_enabled = false;
+    bool planning_enabled = false;
+    {
+        std::lock_guard<std::recursive_mutex> lock(displays_mutex_);
+        for (auto& d : displays_) {
+            if (d->getName() == "Nav2" && d->isEnabled()) nav2_enabled = true;
+            if (d->getName() == "MotionPlanning" && d->isEnabled()) planning_enabled = true;
+        }
+    }
+
+    if (current_tool_ == Tool::Nav2) {
+        if (planning_enabled) current_tool_ = Tool::MotionPlanning;
+        else current_tool_ = Tool::Orbit;
+    }
     else if (current_tool_ == Tool::MotionPlanning) current_tool_ = Tool::Orbit;
     else if (current_tool_ == Tool::Orbit) current_tool_ = Tool::Pan;
-    else current_tool_ = Tool::Nav2;
+    else {
+        if (nav2_enabled) current_tool_ = Tool::Nav2;
+        else if (planning_enabled) current_tool_ = Tool::MotionPlanning;
+        else current_tool_ = Tool::Orbit;
+    }
     last_mouse_x_ = 0; last_mouse_y_ = 0;
 }
 
@@ -152,7 +169,8 @@ void Visualizer::run() {
                                     if (mp->handle_event(Event::Custom)) { 
                                         mp->update_goal_relative(0,0,0, dy*0.05f, dx*0.05f, 0);
                                     } else {
-                                        mp->update_goal_relative((dx*sy - dy*cy)*factor, (-dx*cy - dy*sy)*factor, 0, 0,0,0);
+                                        // Pass dy as negative Z movement to allow vertical dragging
+                                        mp->update_goal_relative((dx*sy - dy*cy)*factor, (-dx*cy - dy*sy)*factor, -dy*factor, 0,0,0);
                                     }
                                 }
                             } else if (mouse.motion == Mouse::Released) {

@@ -74,7 +74,7 @@ private:
     int topic_idx_ = 0;
     int topic_scroll_ = 0;
     std::string status_msg_ = "Ready";
-    Tool current_tool_ = Tool::Nav2;
+    Tool current_tool_ = Tool::Pan;
 
     int last_mouse_x_ = 0;
     int last_mouse_y_ = 0;
