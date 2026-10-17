@@ -30,8 +30,8 @@ void PolygonDisplay::setTopic(const std::string& topic) {
     cfg.color_index = 6; // Magenta
     configs_[topic] = cfg;
     
-    subs_[topic] = node_->create_subscription<geometry_msgs::msg::PolygonStamped>(
-        topic, 10, [this, topic](const geometry_msgs::msg::PolygonStamped::SharedPtr msg) {
+    subs_[topic] = subscribe<geometry_msgs::msg::PolygonStamped>(node_,
+        topic, default_sub_qos(), [this, topic](const geometry_msgs::msg::PolygonStamped::SharedPtr msg) {
             std::lock_guard<std::mutex> lock(mtx_);
             latest_msgs_[topic] = msg;
         });

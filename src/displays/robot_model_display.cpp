@@ -14,7 +14,7 @@ void RobotModelDisplay::onInitialize() {
 void RobotModelDisplay::setTopic(const std::string& topic) {
     std::lock_guard<std::mutex> lock(mtx_);
     topic_ = topic;
-    sub_ = node_->create_subscription<std_msgs::msg::String>(
+    sub_ = subscribe<std_msgs::msg::String>(node_,
         topic, rclcpp::QoS(1).transient_local(),
         std::bind(&RobotModelDisplay::callback, this, std::placeholders::_1));
 }

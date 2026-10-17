@@ -32,8 +32,8 @@ void TemperatureDisplay::setTopic(const std::string& topic) {
     cfg.style = "Points";
     configs_[topic] = cfg;
     
-    subs_[topic] = node_->create_subscription<sensor_msgs::msg::Temperature>(
-        topic, 10, [this, topic](const sensor_msgs::msg::Temperature::SharedPtr msg) {
+    subs_[topic] = subscribe<sensor_msgs::msg::Temperature>(node_,
+        topic, default_sub_qos(), [this, topic](const sensor_msgs::msg::Temperature::SharedPtr msg) {
             std::lock_guard<std::mutex> lock(mtx_);
             latest_msgs_[topic] = msg;
         });

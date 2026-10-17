@@ -34,8 +34,8 @@ void WrenchDisplay::setTopic(const std::string& topic) {
 
     
     try {
-        subs_[topic] = node_->create_subscription<geometry_msgs::msg::WrenchStamped>(
-            topic, 10, [this, topic](const geometry_msgs::msg::WrenchStamped::SharedPtr msg) {
+        subs_[topic] = subscribe<geometry_msgs::msg::WrenchStamped>(node_,
+            topic, default_sub_qos(), [this, topic](const geometry_msgs::msg::WrenchStamped::SharedPtr msg) {
                 std::lock_guard<std::mutex> lock(mtx_);
                 latest_msgs_[topic] = msg;
             });

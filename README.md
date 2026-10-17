@@ -100,6 +100,15 @@ ros2 run terminal_rviz terminal_rviz_node --ros-args \
   -p use_gpu:=true
 ```
 
+### Topic QoS
+Topic displays subscribe best-effort by default, which matches both reliable and best-effort publishers (many sensor drivers and pipelines publish best-effort via `SensorDataQoS`). QoS can be overridden per topic at startup with the standard ROS 2 QoS override parameters (Galactic and newer):
+```bash
+ros2 run terminal_rviz terminal_rviz_node --ros-args \
+  -p qos_overrides./scan.subscription.reliability:=reliable \
+  -p qos_overrides./map.subscription.durability:=volatile
+```
+Supported policies: `reliability`, `durability`, `history`, `depth`.
+
 ## Documentation
 
 - **[Plugin Development Guide](PLUGIN_GUIDE.md)**: A comprehensive guide on how to create, implement, and register new display plugins for TViz.

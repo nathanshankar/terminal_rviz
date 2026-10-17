@@ -32,8 +32,8 @@ void AccelStampedDisplay::setTopic(const std::string& topic) {
     configs_[topic] = cfg;
     
     try {
-        subs_[topic] = node_->create_subscription<geometry_msgs::msg::AccelStamped>(
-            topic, 10, [this, topic](const geometry_msgs::msg::AccelStamped::SharedPtr msg) {
+        subs_[topic] = subscribe<geometry_msgs::msg::AccelStamped>(node_,
+            topic, default_sub_qos(), [this, topic](const geometry_msgs::msg::AccelStamped::SharedPtr msg) {
                 this->callback(msg, topic);
             });
     } catch (...) {

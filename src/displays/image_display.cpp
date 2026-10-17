@@ -29,8 +29,8 @@ void ImageDisplay::setTopic(const std::string& topic) {
     enabled_topics_.push_back(topic);
     if (subs_.find(topic) == subs_.end()) {
         try {
-            subs_[topic] = node_->create_subscription<sensor_msgs::msg::Image>(
-                topic, 10, [this, topic](const sensor_msgs::msg::Image::SharedPtr msg) {
+            subs_[topic] = subscribe<sensor_msgs::msg::Image>(node_,
+                topic, default_sub_qos(), [this, topic](const sensor_msgs::msg::Image::SharedPtr msg) {
                     this->callback(msg, topic);
                 });
         } catch (...) {
@@ -59,8 +59,8 @@ void ImageDisplay::replaceTopic(int slot, const std::string& new_topic) {
     // Create new subscription if needed
     if (subs_.find(new_topic) == subs_.end()) {
         try {
-            subs_[new_topic] = node_->create_subscription<sensor_msgs::msg::Image>(
-                new_topic, 10, [this, new_topic](const sensor_msgs::msg::Image::SharedPtr msg) {
+            subs_[new_topic] = subscribe<sensor_msgs::msg::Image>(node_,
+                new_topic, default_sub_qos(), [this, new_topic](const sensor_msgs::msg::Image::SharedPtr msg) {
                     this->callback(msg, new_topic);
                 });
         } catch (...) {

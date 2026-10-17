@@ -39,8 +39,8 @@ void PointCloudDisplay::setTopic(const std::string& topic) {
     configs_[topic] = cfg;
     
     try {
-        subs_[topic] = node_->create_subscription<sensor_msgs::msg::PointCloud2>(
-            topic, 10, [this, topic](const sensor_msgs::msg::PointCloud2::SharedPtr msg) {
+        subs_[topic] = subscribe<sensor_msgs::msg::PointCloud2>(node_,
+            topic, default_sub_qos(), [this, topic](const sensor_msgs::msg::PointCloud2::SharedPtr msg) {
                 this->callback(msg, topic);
             });
     } catch (...) {

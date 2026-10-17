@@ -20,8 +20,8 @@ void EffortDisplay::setTopic(const std::string& topic) {
     }
     enabled_topics_.push_back(topic);
     configs_[topic] = TopicConfig();
-    subs_[topic] = node_->create_subscription<sensor_msgs::msg::JointState>(
-        topic, 10, [this, topic](const sensor_msgs::msg::JointState::SharedPtr msg) {
+    subs_[topic] = subscribe<sensor_msgs::msg::JointState>(node_,
+        topic, default_sub_qos(), [this, topic](const sensor_msgs::msg::JointState::SharedPtr msg) {
             callback(msg, topic);
         });
 }
