@@ -31,8 +31,8 @@ void GridCellsDisplay::setTopic(const std::string& topic) {
     cfg.size = 0.2f;
     configs_[topic] = cfg;
     
-    subs_[topic] = node_->create_subscription<nav_msgs::msg::GridCells>(
-        topic, 10, [this, topic](const nav_msgs::msg::GridCells::SharedPtr msg) {
+    subs_[topic] = subscribe<nav_msgs::msg::GridCells>(node_,
+        topic, default_sub_qos(), [this, topic](const nav_msgs::msg::GridCells::SharedPtr msg) {
             std::lock_guard<std::mutex> lock(mtx_);
             latest_msgs_[topic] = msg;
         });

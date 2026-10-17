@@ -13,6 +13,24 @@
 
 namespace terminal_rviz {
 
+// Default QoS for topic displays. Best-effort matches both reliable and best-effort
+// publishers; a reliable subscriber never matches a best-effort one (anything using SensorDataQoS).
+inline rclcpp::QoS default_sub_qos() { return rclcpp::QoS(10).best_effort(); }
+
+// create_subscription with standard per-topic QoS overrides enabled, e.g.
+//   --ros-args -p qos_overrides./scan.subscription.reliability:=reliable
+template<typename MsgT, typename CallbackT>
+typename rclcpp::Subscription<MsgT>::SharedPtr subscribe(
+    const rclcpp::Node::SharedPtr& node, const std::string& topic, const rclcpp::QoS& qos, CallbackT&& callback) {
+    rclcpp::SubscriptionOptions options;
+#if __has_include(<rclcpp/qos_overriding_options.hpp>)  // Galactic+; Foxy has no QoS overrides
+    options.qos_overriding_options = rclcpp::QosOverridingOptions({
+        rclcpp::QosPolicyKind::Reliability, rclcpp::QosPolicyKind::Durability,
+        rclcpp::QosPolicyKind::History, rclcpp::QosPolicyKind::Depth});
+#endif
+    return node->create_subscription<MsgT>(topic, qos, std::forward<CallbackT>(callback), options);
+}
+
 struct TopicConfig {
     std::string color_style = "Flat"; // Flat, Axis, RGB, Topic
     float alpha = 1.0f;

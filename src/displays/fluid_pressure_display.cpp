@@ -32,8 +32,8 @@ void FluidPressureDisplay::setTopic(const std::string& topic) {
     cfg.style = "Points";
     configs_[topic] = cfg;
     
-    subs_[topic] = node_->create_subscription<sensor_msgs::msg::FluidPressure>(
-        topic, 10, [this, topic](const sensor_msgs::msg::FluidPressure::SharedPtr msg) {
+    subs_[topic] = subscribe<sensor_msgs::msg::FluidPressure>(node_,
+        topic, default_sub_qos(), [this, topic](const sensor_msgs::msg::FluidPressure::SharedPtr msg) {
             std::lock_guard<std::mutex> lock(mtx_);
             latest_msgs_[topic] = msg;
         });

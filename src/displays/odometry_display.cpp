@@ -36,8 +36,8 @@ void OdometryDisplay::setTopic(const std::string& topic) {
     configs_[topic] = cfg;
     
     try {
-        subs_[topic] = node_->create_subscription<nav_msgs::msg::Odometry>(
-            topic, 10, [this, topic](const nav_msgs::msg::Odometry::SharedPtr msg) {
+        subs_[topic] = subscribe<nav_msgs::msg::Odometry>(node_,
+            topic, default_sub_qos(), [this, topic](const nav_msgs::msg::Odometry::SharedPtr msg) {
                 std::lock_guard<std::mutex> lock(mtx_);
                 geometry_msgs::msg::PoseStamped ps;
                 ps.header = msg->header;

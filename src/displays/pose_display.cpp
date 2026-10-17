@@ -32,8 +32,8 @@ void PoseDisplay::setTopic(const std::string& topic) {
     configs_[topic] = cfg;
     
     try {
-        subs_[topic] = node_->create_subscription<geometry_msgs::msg::PoseStamped>(
-            topic, 10, [this, topic](const geometry_msgs::msg::PoseStamped::SharedPtr msg) {
+        subs_[topic] = subscribe<geometry_msgs::msg::PoseStamped>(node_,
+            topic, default_sub_qos(), [this, topic](const geometry_msgs::msg::PoseStamped::SharedPtr msg) {
                 std::lock_guard<std::mutex> lock(mtx_);
                 latest_msgs_[topic] = msg;
             });

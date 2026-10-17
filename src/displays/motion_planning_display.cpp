@@ -20,11 +20,11 @@ MotionPlanningDisplay::MotionPlanningDisplay(rclcpp::Node::SharedPtr node)
 
 void MotionPlanningDisplay::onInitialize() {
     srand(time(NULL));
-    urdf_sub_ = node_->create_subscription<std_msgs::msg::String>(
+    urdf_sub_ = subscribe<std_msgs::msg::String>(node_,
         "/robot_description", rclcpp::QoS(1).transient_local(),
         std::bind(&MotionPlanningDisplay::robot_description_callback, this, std::placeholders::_1));
         
-    srdf_sub_ = node_->create_subscription<std_msgs::msg::String>(
+    srdf_sub_ = subscribe<std_msgs::msg::String>(node_,
         "/robot_description_semantic", rclcpp::QoS(1).transient_local(),
         [this](const std_msgs::msg::String::SharedPtr msg) {
             std::lock_guard<std::mutex> lock(mtx_);
@@ -134,12 +134,12 @@ void MotionPlanningDisplay::onInitialize() {
             }
         });
         
-    joint_sub_ = node_->create_subscription<sensor_msgs::msg::JointState>(
-        "/joint_states", 10,
+    joint_sub_ = subscribe<sensor_msgs::msg::JointState>(node_,
+        "/joint_states", default_sub_qos(),
         std::bind(&MotionPlanningDisplay::joint_state_callback, this, std::placeholders::_1));
         
-    traj_sub_ = node_->create_subscription<moveit_msgs::msg::DisplayTrajectory>(
-        "/display_planned_path", 10,
+    traj_sub_ = subscribe<moveit_msgs::msg::DisplayTrajectory>(node_,
+        "/display_planned_path", default_sub_qos(),
         std::bind(&MotionPlanningDisplay::trajectory_callback, this, std::placeholders::_1));
         
     move_group_client_ = rclcpp_action::create_client<MoveGroup>(node_, "move_action");

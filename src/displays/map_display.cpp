@@ -32,7 +32,7 @@ void MapDisplay::setTopic(const std::string& topic) {
     configs_[topic] = cfg;
     
     try {
-        subs_[topic] = node_->create_subscription<nav_msgs::msg::OccupancyGrid>(
+        subs_[topic] = subscribe<nav_msgs::msg::OccupancyGrid>(node_,
             topic, rclcpp::QoS(1).transient_local(), [this, topic](const nav_msgs::msg::OccupancyGrid::SharedPtr msg) {
                 std::lock_guard<std::mutex> lock(mtx_);
                 latest_maps_[topic] = msg;

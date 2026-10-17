@@ -32,8 +32,8 @@ void RangeDisplay::setTopic(const std::string& topic) {
     configs_[topic] = cfg;
     
     try {
-        subs_[topic] = node_->create_subscription<sensor_msgs::msg::Range>(
-            topic, 10, [this, topic](const sensor_msgs::msg::Range::SharedPtr msg) {
+        subs_[topic] = subscribe<sensor_msgs::msg::Range>(node_,
+            topic, default_sub_qos(), [this, topic](const sensor_msgs::msg::Range::SharedPtr msg) {
                 std::lock_guard<std::mutex> lock(mtx_);
                 latest_msgs_[topic] = msg;
             });

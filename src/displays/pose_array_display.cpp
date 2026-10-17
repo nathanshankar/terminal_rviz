@@ -31,8 +31,8 @@ void PoseArrayDisplay::setTopic(const std::string& topic) {
     cfg.size = 0.2f;
     configs_[topic] = cfg;
     
-    subs_[topic] = node_->create_subscription<geometry_msgs::msg::PoseArray>(
-        topic, 10, [this, topic](const geometry_msgs::msg::PoseArray::SharedPtr msg) {
+    subs_[topic] = subscribe<geometry_msgs::msg::PoseArray>(node_,
+        topic, default_sub_qos(), [this, topic](const geometry_msgs::msg::PoseArray::SharedPtr msg) {
             std::lock_guard<std::mutex> lock(mtx_);
             latest_msgs_[topic] = msg;
         });

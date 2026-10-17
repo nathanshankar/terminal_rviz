@@ -32,16 +32,16 @@ void MarkerDisplay::setTopic(const std::string& topic) {
     configs_[topic] = cfg;
     
     if (preferred_type_ == "visualization_msgs/msg/MarkerArray") {
-        marker_array_subs_[topic] = node_->create_subscription<visualization_msgs::msg::MarkerArray>(
-            topic, 10, [this, topic](const visualization_msgs::msg::MarkerArray::SharedPtr msg) {
+        marker_array_subs_[topic] = subscribe<visualization_msgs::msg::MarkerArray>(node_,
+            topic, default_sub_qos(), [this, topic](const visualization_msgs::msg::MarkerArray::SharedPtr msg) {
                 std::lock_guard<std::mutex> lock(mtx_);
                 for (const auto& marker : msg->markers) {
                     marker_store_[topic][marker.ns + std::to_string(marker.id)] = marker;
                 }
             });
     } else {
-        marker_subs_[topic] = node_->create_subscription<visualization_msgs::msg::Marker>(
-            topic, 10, [this, topic](const visualization_msgs::msg::Marker::SharedPtr msg) {
+        marker_subs_[topic] = subscribe<visualization_msgs::msg::Marker>(node_,
+            topic, default_sub_qos(), [this, topic](const visualization_msgs::msg::Marker::SharedPtr msg) {
                 std::lock_guard<std::mutex> lock(mtx_);
                 marker_store_[topic][msg->ns + std::to_string(msg->id)] = *msg;
             });
